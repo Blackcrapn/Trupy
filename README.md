@@ -76,7 +76,7 @@ src/
 
 ## Публикация
 
-Workflow `.github/workflows/deploy.yml` автоматически собирает `main` и публикует папку `dist` в GitHub Pages. Vite настроен на подпуть `/Trupy/`.
+Production-сборка опубликована из ветки `gh-pages`: **https://blackcrapn.github.io/Trupy/**. Vite настроен на подпуть `/Trupy/`; после изменений выполните `npm run build` и обновите содержимое ветки `gh-pages` файлами из папки `dist`.
 
 ## Примечание
 
