@@ -1,0 +1,14 @@
+{
+  "name": "Trupy: Долина Мёртвых",
+  "short_name": "Trupy",
+  "description": "Пиксельная 2D action RPG в мире тёмного фэнтези.",
+  "start_url": "/Trupy/",
+  "scope": "/Trupy/",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#090b12",
+  "theme_color": "#090b12",
+  "icons": [
+    { "src": "/Trupy/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
