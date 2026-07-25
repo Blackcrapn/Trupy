@@ -1,12 +1,14 @@
 import Phaser from 'phaser';
 import { BATTLE_PASS, ENEMIES, NPCS, QUESTS, WEAPONS, XP_FOR_LEVEL } from '../data/content';
 import { getItem } from '../data/items';
-import { BUILDINGS, LOCATIONS, MAP_SHAPES, RIFT_POINTS, WORLD_HEIGHT, WORLD_WIDTH, getBuildingDoor } from '../data/world';
+import { getWeaponVisual } from '../data/weaponVisuals';
+import { BUILDINGS, LOCATIONS, MAP_ROADS, MAP_SHAPES, RIFT_POINTS, WORLD_HEIGHT, WORLD_WIDTH, getBuildingDoor } from '../data/world';
 import { GameUI } from '../ui/GameUI';
 import { AudioManager, audio } from '../systems/AudioManager';
 import { InventorySystem } from '../systems/InventorySystem';
 import { QuestSystem } from '../systems/QuestSystem';
 import { SaveSystem } from '../systems/SaveSystem';
+import { WeaponShopSystem } from '../systems/WeaponShopSystem';
 import type { DialogueAction, DialoguePayload, HudSnapshot, ObjectiveType, PlayerSave, QuestDefinition, WeaponDefinition } from './types';
 import { GameEvents } from './events';
 
@@ -46,9 +48,13 @@ export class WorldScene extends Phaser.Scene {
   private saves!: SaveSystem;
   private quests!: QuestSystem;
   private inventory!: InventorySystem;
+  private shop!: WeaponShopSystem;
   private readonly sfx: AudioManager = audio;
   private ui!: GameUI;
   private player!: Phaser.Physics.Arcade.Sprite;
+  private heldWeapon!: Phaser.GameObjects.Image;
+  private lastWeaponId = '';
+  private tacticalBonusUntil = 0;
   private solids!: Phaser.Physics.Arcade.StaticGroup;
   private enemies!: Phaser.Physics.Arcade.Group;
   private projectiles!: Phaser.Physics.Arcade.Group;
@@ -104,6 +110,7 @@ export class WorldScene extends Phaser.Scene {
     this.saves = new SaveSystem();
     this.quests = new QuestSystem(this.saves);
     this.inventory = new InventorySystem(this.saves);
+    this.shop = new WeaponShopSystem(this.saves);
     this.saves.mutate((save) => { save.currentScene = 'world'; }, true);
     this.sfx.setMix(this.audioMix(this.saves.get()));
     if (!this.sfx.isUnlocked()) void this.sfx.unlock();
@@ -162,6 +169,7 @@ export class WorldScene extends Phaser.Scene {
       this.lastSlowTickAt = time;
     }
     this.player.setDepth(this.player.y / 10 + 20);
+    this.syncHeldWeapon();
     this.playtimeAccumulator += delta;
     if (this.playtimeAccumulator > 450) {
       this.playtimeAccumulator = 0;
@@ -227,27 +235,66 @@ export class WorldScene extends Phaser.Scene {
 
   private drawBuildings(): void {
     BUILDINGS.forEach((building, index) => {
-      const { x, y, w, h, wall, roof, name, doorX } = building;
+      const { x, y, w, h, wall, roof, name, doorX, style } = building;
       const graphics = this.add.graphics().setDepth((y + h / 2) / 10 + 5);
-      graphics.fillStyle(0x080a10, .62).fillRect(x - w / 2 + 12, y - h / 2 + 16, w, h);
-      graphics.fillStyle(wall, 1).fillRect(x - w / 2, y - h / 2, w, h);
-      graphics.fillStyle(Phaser.Display.Color.IntegerToColor(wall).brighten(10).color, .32).fillRect(x - w / 2 + 8, y - h / 2 + 38, w - 16, 8);
-      graphics.fillStyle(roof, 1).fillRect(x - w / 2 - 13, y - h / 2 - 17, w + 26, 49);
-      graphics.lineStyle(4, 0x171821, 1).strokeRect(x - w / 2, y - h / 2, w, h);
-      for (let tx = x - w / 2; tx < x + w / 2; tx += 29) {
-        graphics.lineStyle(4, 0x171821, .9).lineBetween(tx, y - h / 2 + 29, tx + 21, y - h / 2 - 13);
+      const left = x - w / 2;
+      const top = y - h / 2;
+      const bottom = y + h / 2;
+      const doorCenter = x + doorX;
+      const highlight = Phaser.Display.Color.IntegerToColor(wall).brighten(14).color;
+      graphics.fillStyle(0x07090f, .58).fillRect(left + 12, top + 16, w + 5, h + 12);
+      graphics.fillStyle(0x252730, 1).fillRect(left - 5, bottom - 13, w + 10, 18);
+      graphics.fillStyle(wall, 1).fillRect(left, top, w, h);
+      graphics.fillStyle(highlight, .28).fillRect(left + 8, top + 39, w - 16, 8);
+      graphics.lineStyle(4, 0x171821, 1).strokeRect(left, top, w, h);
+
+      if (style === 'chapel') {
+        graphics.fillStyle(roof, 1).fillTriangle(left - 14, top + 26, x, top - 42, left + w + 14, top + 26);
+        graphics.fillStyle(0x262833, 1).fillRect(x - 26, top - 46, 52, 46);
+        graphics.fillStyle(0xa79ab2, 1).fillRect(x - 4, top - 38, 8, 27); graphics.fillRect(x - 14, top - 29, 28, 8);
+      } else if (style === 'citadel') {
+        graphics.fillStyle(roof, 1).fillRect(left - 14, top - 18, w + 28, 54);
+        for (let bx = left - 8; bx < left + w; bx += 38) graphics.fillStyle(0x6c454a, 1).fillRect(bx, top - 32, 22, 20);
+        graphics.fillStyle(0xd05a43, .8).fillCircle(left + 34, top + 9, 12); graphics.fillCircle(left + w - 34, top + 9, 12);
+      } else if (style === 'warehouse') {
+        graphics.fillStyle(roof, 1).fillRect(left - 14, top - 18, w + 28, 58);
+        for (let rx = left - 8; rx < left + w + 8; rx += 22) graphics.lineStyle(3, 0x171821, .8).lineBetween(rx, top - 15, rx, top + 36);
+        graphics.fillStyle(0x77533b, 1).fillRect(left + 12, bottom - 61, 62, 48);
+      } else if (style === 'marsh') {
+        graphics.fillStyle(roof, 1).fillRect(left - 12, top - 14, w + 24, 50);
+        for (let rx = left - 8; rx < left + w; rx += 26) graphics.fillStyle(index % 2 ? 0x334039 : 0x29342f, 1).fillRect(rx, top - 17 + (rx % 3), 18, 53);
+        graphics.fillStyle(0x63826f, .7).fillRect(left + 9, top + 47, w - 18, 5);
+      } else {
+        graphics.fillStyle(roof, 1).fillRect(left - 13, top - 17, w + 26, style === 'inn' ? 58 : 49);
+        for (let tx = left; tx < left + w; tx += style === 'forge' ? 34 : 29) graphics.lineStyle(4, 0x171821, .9).lineBetween(tx, top + 29, tx + 21, top - 13);
+        if (style === 'forge') {
+          graphics.fillStyle(0x34282a, 1).fillRect(left + w - 46, top - 50, 24, 55);
+          graphics.fillStyle(0xe66c48, .7).fillCircle(left + w - 34, top - 48, 7);
+        }
+        if (style === 'inn') graphics.fillStyle(0xa87245, .65).fillRect(left + 10, top + 46, w - 20, 12);
       }
-      graphics.fillStyle(0x211a1d, 1).fillRect(x + doorX - 19, y + h / 2 - 50, 38, 50);
-      graphics.fillStyle(building.interior ? 0xd9a75c : 0x756b61, 1).fillCircle(x + doorX + 11, y + h / 2 - 27, 3);
-      const windowCount = w > 220 ? 2 : 1;
-      for (let windowIndex = 0; windowIndex < windowCount; windowIndex += 1) {
-        const wx = x - w / 2 + 25 + windowIndex * (w - 70);
-        graphics.fillStyle(0x9b744d, 1).fillRect(wx, y - 10, 36, 30);
-        graphics.fillStyle(index % 3 === 0 ? 0x8f7899 : 0x7ea0a2, 1).fillRect(wx + 5, y - 5, 26, 20);
-        graphics.lineStyle(2, 0x30313b, 1).lineBetween(wx + 18, y - 5, wx + 18, y + 15);
-      }
-      this.add.text(x, y - h / 2 - 27, name, { fontFamily: 'monospace', fontSize: '10px', color: '#ded8e1', backgroundColor: '#11131acc', padding: { x: 6, y: 3 } }).setOrigin(.5).setDepth((y + h / 2) / 10 + 7);
-      this.addSolidRect(x, y - 5, w, h - 6);
+
+      graphics.fillStyle(0x211a1d, 1).fillRect(doorCenter - 21, bottom - 54, 42, 54);
+      graphics.lineStyle(3, building.interior ? 0xb9809d : 0x58545a, 1).strokeRect(doorCenter - 21, bottom - 54, 42, 54);
+      graphics.fillStyle(building.interior ? 0xe2b45f : 0x756b61, 1).fillCircle(doorCenter + 12, bottom - 28, 3);
+      const windowColor = style === 'forge' || style === 'citadel' ? 0xd98253 : style === 'marsh' ? 0x6fb394 : 0x82a5aa;
+      const windowPositions = w > 220 ? [left + 28, left + w - 66] : [left + 25];
+      windowPositions.forEach((wx) => {
+        if (Math.abs(wx + 18 - doorCenter) < 50) return;
+        graphics.fillStyle(0x9b744d, 1).fillRect(wx, y - 12, 38, 31);
+        graphics.fillStyle(windowColor, 1).fillRect(wx + 5, y - 7, 28, 21);
+        graphics.lineStyle(2, 0x30313b, 1).lineBetween(wx + 19, y - 7, wx + 19, y + 14);
+      });
+      this.add.text(x, top - (style === 'chapel' ? 55 : 27), name, { fontFamily: 'monospace', fontSize: '10px', color: '#ded8e1', backgroundColor: '#11131acc', padding: { x: 6, y: 3 } }).setOrigin(.5).setDepth((bottom) / 10 + 7);
+
+      const doorwayWidth = 64;
+      const lowerHeight = 52;
+      const upperHeight = h - lowerHeight;
+      this.addSolidRect(x, top + upperHeight / 2, w, upperHeight);
+      const leftWidth = Math.max(0, doorCenter - doorwayWidth / 2 - left);
+      const rightWidth = Math.max(0, left + w - (doorCenter + doorwayWidth / 2));
+      if (leftWidth > 4) this.addSolidRect(left + leftWidth / 2, bottom - lowerHeight / 2, leftWidth, lowerHeight);
+      if (rightWidth > 4) this.addSolidRect(doorCenter + doorwayWidth / 2 + rightWidth / 2, bottom - lowerHeight / 2, rightWidth, lowerHeight);
     });
 
     const well = this.add.graphics().setDepth(74);
@@ -267,8 +314,11 @@ export class WorldScene extends Phaser.Scene {
     graphics.lineBetween(1495, 870, 1740, 870);
     graphics.lineBetween(1880, 870, 2180, 870);
     for (let x = 1510; x < 2180; x += 36) { graphics.lineBetween(x, 285, x, 310); graphics.lineBetween(x, 855, x, 880); }
+    graphics.fillStyle(0x30353a, 1).fillRect(1486, 595, 22, 115);
+    graphics.fillStyle(0x676b70, 1).fillRect(1488, 580, 14, 24).fillRect(1488, 700, 14, 24);
     this.addSolidRect(1838, 295, 686, 12);
-    this.addSolidRect(1495, 582, 12, 575);
+    this.addSolidRect(1495, 442, 12, 294);
+    this.addSolidRect(1495, 790, 12, 160);
     this.addSolidRect(2180, 582, 12, 575);
     this.addSolidRect(1615, 870, 240, 12);
     this.addSolidRect(2030, 870, 300, 12);
@@ -288,7 +338,10 @@ export class WorldScene extends Phaser.Scene {
     graphics.fillRect(2000, 1290, 34, 178);
     graphics.fillRect(2486, 1290, 34, 178);
     graphics.lineStyle(5, 0x796180, .8).strokeRect(2110, 1030, 340, 34).strokeRect(2000, 1430, 520, 38);
-    this.addSolidRect(2280, 1047, 340, 34);
+    graphics.fillStyle(0x342a40, 1).fillRect(2215, 1024, 130, 48);
+    graphics.fillStyle(0x8d6b92, 1).fillRect(2210, 1026, 12, 42).fillRect(2338, 1026, 12, 42);
+    this.addSolidRect(2162, 1047, 104, 34);
+    this.addSolidRect(2398, 1047, 104, 34);
     this.addSolidRect(2127, 1130, 34, 200);
     this.addSolidRect(2433, 1130, 34, 200);
     this.addSolidRect(2255, 1449, 520, 38);
@@ -362,7 +415,10 @@ export class WorldScene extends Phaser.Scene {
     }
     graphics.fillStyle(0x171217, 1).fillRoundedRect(4060, 2350, 210, 230, 24);
     graphics.lineStyle(8, 0xc35a43, .7).strokeRoundedRect(4060, 2350, 210, 230, 24);
-    this.addSolidRect(3880, 2090, 24, 1000);
+    graphics.fillStyle(0x0c0d12, 1).fillRect(3868, 1800, 55, 120);
+    graphics.lineStyle(5, 0xc45b49, .8).strokeRect(3868, 1800, 55, 120);
+    this.addSolidRect(3880, 1685, 24, 190);
+    this.addSolidRect(3880, 2260, 24, 680);
     this.addSolidRect(4450, 2090, 24, 1000);
     this.addSolidRect(4165, 1570, 570, 24);
     this.addSolidRect(3980, 2600, 200, 24);
@@ -372,6 +428,16 @@ export class WorldScene extends Phaser.Scene {
   private scatterDecorations(): void {
     let seed = 918273;
     const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const distanceToSegment = (px: number, py: number, ax: number, ay: number, bx: number, by: number) => {
+      const dx = bx - ax; const dy = by - ay;
+      const lengthSq = dx * dx + dy * dy;
+      const t = lengthSq ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSq)) : 0;
+      return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+    };
+    const nearRoad = (x: number, y: number, margin = 125) => MAP_ROADS.some((road) => road.slice(1).some(([bx, by], index) => {
+      const [ax, ay] = road[index];
+      return distanceToSegment(x, y, ax, ay, bx, by) < margin;
+    }));
     const addTree = (x: number, y: number, scale = 2.1) => {
       const tree = this.add.image(x, y, 'tree').setScale(scale).setDepth(y / 10 + 8);
       tree.setTint(Phaser.Display.Color.GetColor(210 + Math.floor(random() * 30), 220 + Math.floor(random() * 20), 215 + Math.floor(random() * 30)));
@@ -380,18 +446,19 @@ export class WorldScene extends Phaser.Scene {
     for (let index = 0; index < 50; index += 1) {
       const x = 790 + random() * 1020;
       const y = 950 + random() * 720;
-      if (Math.abs(y - (1000 + (x - 800) * .4)) < 90) continue;
+      if (Math.abs(y - (1000 + (x - 800) * .4)) < 90 || nearRoad(x, y, 145)) continue;
       addTree(x, y, 1.8 + random() * .55);
     }
     for (let index = 0; index < 55; index += 1) {
       const x = 90 + random() * (WORLD_WIDTH - 180);
       const y = 80 + random() * (WORLD_HEIGHT - 160);
       const inLocation = LOCATIONS.some((location) => x > location.x - 50 && x < location.x + location.w + 50 && y > location.y - 50 && y < location.y + location.h + 50);
-      if (!inLocation) addTree(x, y, 1.7 + random() * .5);
+      if (!inLocation && !nearRoad(x, y, 145)) addTree(x, y, 1.7 + random() * .5);
     }
     for (let index = 0; index < 65; index += 1) {
       const x = 100 + random() * (WORLD_WIDTH - 200);
       const y = 100 + random() * (WORLD_HEIGHT - 200);
+      if (nearRoad(x, y, 105)) continue;
       this.add.image(x, y, 'rock').setScale(1.3 + random() * .8).setAlpha(.82).setDepth(y / 10 + 1);
     }
   }
@@ -409,6 +476,19 @@ export class WorldScene extends Phaser.Scene {
     this.player.setDrag(900, 900);
     const body = this.player.body as Phaser.Physics.Arcade.Body;
     body.setSize(16, 12).setOffset(8, 26);
+    this.lastWeaponId = this.saves.get().equippedWeapon;
+    this.heldWeapon = this.add.image(saved.x, saved.y, `held-${this.lastWeaponId}`).setScale(1.45).setDepth(this.player.depth + 1);
+    this.syncHeldWeapon();
+  }
+
+  private syncHeldWeapon(): void {
+    if (!this.heldWeapon?.scene || !this.player?.active) return;
+    const weaponId = this.saves.get().equippedWeapon;
+    if (this.heldWeapon.texture.key !== `held-${weaponId}`) this.heldWeapon.setTexture(`held-${weaponId}`);
+    document.documentElement.dataset.heldWeapon = weaponId;
+    const angle = this.facing.angle();
+    this.heldWeapon.setOrigin(.2, .5).setPosition(this.player.x + this.facing.x * 10, this.player.y + 5 + this.facing.y * 9).setRotation(angle).setAlpha(this.player.alpha);
+    this.heldWeapon.setDepth(this.facing.y < -.35 ? this.player.depth - 1 : this.player.depth + 2);
   }
 
   private createNpcs(): void {
@@ -633,7 +713,8 @@ export class WorldScene extends Phaser.Scene {
       const projectile = projectileObject as Phaser.Physics.Arcade.Sprite;
       const enemy = enemyObject as Phaser.Physics.Arcade.Sprite;
       if (!projectile.active || !enemy.active) return;
-      this.damageEnemy(enemy, Number(projectile.getData('damage') ?? 0));
+      const weapon = WEAPONS.find((entry) => entry.id === projectile.getData('weaponId')) ?? WEAPONS[0];
+      this.damageEnemy(enemy, this.weaponDamageAgainst(enemy, weapon, Number(projectile.getData('damage') ?? 0)));
       projectile.destroy();
     });
   }
@@ -644,6 +725,9 @@ export class WorldScene extends Phaser.Scene {
     this.keys = this.input.keyboard.addKeys('W,A,S,D,E,F,Q,I,M,B,R,SHIFT,ESC,SPACE,ONE,TWO,THREE,FOUR,FIVE,SIX,SEVEN,EIGHT') as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       if (!this.uiLocked && pointer.leftButtonDown()) this.attack(pointer);
+    });
+    this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: Phaser.GameObjects.GameObject[], _deltaX: number, deltaY: number) => {
+      if (!this.uiLocked) this.cycleWeapon(deltaY > 0 ? 1 : -1);
     });
   }
 
@@ -765,8 +849,8 @@ export class WorldScene extends Phaser.Scene {
     const weaponKeys = ['ONE','TWO','THREE','FOUR','FIVE','SIX','SEVEN','EIGHT'];
     weaponKeys.forEach((key, index) => {
       if (Phaser.Input.Keyboard.JustDown(this.keys[key])) {
-        const weapon = this.saves.get().ownedWeapons[index];
-        if (weapon) this.equipWeapon(weapon);
+        const weapon = WEAPONS[index];
+        if (weapon && this.saves.get().ownedWeapons.includes(weapon.id)) this.equipWeapon(weapon.id);
       }
     });
   }
@@ -810,7 +894,7 @@ export class WorldScene extends Phaser.Scene {
       this.tweens.add({ targets: ring, radius: 150, alpha: 0, angle: 180, duration: 420, onComplete: () => ring.destroy() });
       this.enemies.children.each((child) => {
         const enemy = child as Phaser.Physics.Arcade.Sprite;
-        if (enemy.active && Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y) < 165) this.damageEnemy(enemy, Math.round((weapon.damage + this.inventory.damageBonus()) * 1.7));
+        if (enemy.active && Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y) < 165) this.damageEnemy(enemy, this.weaponDamageAgainst(enemy, weapon, Math.round((weapon.damage + this.inventory.damageBonus()) * 1.7)));
         return null;
       });
     } else if (weapon.kind === 'ranged') {
@@ -823,7 +907,7 @@ export class WorldScene extends Phaser.Scene {
         const enemy = child as Phaser.Physics.Arcade.Sprite;
         const distance = Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y);
         if (enemy.active && distance < 240) {
-          this.damageEnemy(enemy, Math.round((weapon.damage + this.inventory.damageBonus()) * 1.35));
+          this.damageEnemy(enemy, this.weaponDamageAgainst(enemy, weapon, Math.round((weapon.damage + this.inventory.damageBonus()) * 1.35)));
           const push = new Phaser.Math.Vector2(enemy.x - this.player.x, enemy.y - this.player.y).normalize();
           enemy.setVelocity(push.x * 280, push.y * 280);
         }
@@ -846,6 +930,8 @@ export class WorldScene extends Phaser.Scene {
       this.facing.copy(direction);
     }
     this.sfx.attack(weapon.kind);
+    this.heldWeapon?.setScale(1.8).setTint(Phaser.Display.Color.HexStringToColor(weapon.accent).color);
+    this.time.delayedCall(130, () => this.heldWeapon?.setScale(1.45).clearTint());
     if (weapon.kind === 'melee') this.meleeAttack(weapon, direction);
     else this.projectileAttack(weapon, direction);
     this.cameras.main.shake(55, weapon.kind === 'melee' ? .0018 : .001);
@@ -869,7 +955,7 @@ export class WorldScene extends Phaser.Scene {
       const distance = toEnemy.length();
       if (distance > weapon.range + 26 || distance < 1) return null;
       toEnemy.normalize();
-      if (toEnemy.dot(direction) > .12) this.damageEnemy(enemy, weapon.damage + this.inventory.damageBonus());
+      if (toEnemy.dot(direction) > .12) this.damageEnemy(enemy, this.weaponDamageAgainst(enemy, weapon, weapon.damage + this.inventory.damageBonus()));
       return null;
     });
   }
@@ -878,10 +964,18 @@ export class WorldScene extends Phaser.Scene {
     const texture = weapon.kind === 'magic' ? 'projectile-magic' : 'projectile-bolt';
     const projectile = this.physics.add.sprite(this.player.x + direction.x * 30, this.player.y + direction.y * 30, texture)
       .setScale(weapon.kind === 'magic' ? 1.7 : 2).setRotation(direction.angle()).setDepth(this.player.depth + 3);
-    projectile.setData({ damage: weapon.damage + this.inventory.damageBonus(), ttl: weapon.range / (weapon.projectileSpeed ?? 350) * 1000 });
+    projectile.setData({ damage: weapon.damage + this.inventory.damageBonus(), weaponId: weapon.id, ttl: weapon.range / (weapon.projectileSpeed ?? 350) * 1000 });
     projectile.setVelocity(direction.x * (weapon.projectileSpeed ?? 350), direction.y * (weapon.projectileSpeed ?? 350));
     this.projectiles.add(projectile);
     if (weapon.kind === 'magic') this.tweens.add({ targets: projectile, angle: projectile.angle + 180, duration: 450, repeat: -1 });
+  }
+
+  private weaponDamageAgainst(enemy: Phaser.Physics.Arcade.Sprite, weapon: WeaponDefinition, baseDamage: number): number {
+    const type = enemy.getData('type') as string;
+    const visual = getWeaponVisual(weapon.id);
+    let multiplier = visual.bonusVs.includes(type) ? (type === 'nameless' || type === 'cinderlord' ? 1.2 : 1.28) : 1;
+    if (this.time.now < this.tacticalBonusUntil) multiplier *= 1.15;
+    return Math.round(baseDamage * multiplier);
   }
 
   private damageEnemy(enemy: Phaser.Physics.Arcade.Sprite, damage: number): void {
@@ -1318,29 +1412,38 @@ export class WorldScene extends Phaser.Scene {
     this.syncInteractables();
   }
 
+  private cycleWeapon(direction: 1 | -1): void {
+    const owned = WEAPONS.filter((weapon) => this.saves.get().ownedWeapons.includes(weapon.id));
+    if (owned.length < 2) return;
+    const current = owned.findIndex((weapon) => weapon.id === this.saves.get().equippedWeapon);
+    const next = owned[(current + direction + owned.length) % owned.length];
+    this.equipWeapon(next.id);
+  }
+
   private equipWeapon(weaponId: string): void {
     const weapon = WEAPONS.find((item) => item.id === weaponId);
+    const previous = this.saves.get().equippedWeapon;
     if (!weapon || !this.inventory.equip(weaponId)) return;
+    if (previous !== weaponId) {
+      this.lastWeaponId = previous;
+      this.tacticalBonusUntil = this.time.now + 1800;
+      this.heldWeapon?.setTexture(`held-${weaponId}`).setScale(1.9).setTint(Phaser.Display.Color.HexStringToColor(weapon.accent).color);
+      this.time.delayedCall(180, () => this.heldWeapon?.setScale(1.45).clearTint());
+    }
     this.sfx.ui();
-    GameEvents.emit('toast', `Экипировано: ${weapon.name}`);
+    const visual = getWeaponVisual(weaponId);
+    GameEvents.emit('toast', `Экипировано: ${weapon.name}${previous !== weaponId ? ` • тактическая смена +15%` : ''} • ${visual.bonusLabel}`);
     this.emitHud(true);
   }
 
   private buyWeapon(weaponId: string): void {
-    const weapon = WEAPONS.find((item) => item.id === weaponId);
-    const save = this.saves.get();
-    if (!weapon || save.ownedWeapons.includes(weaponId)) return;
-    if (save.reputation < weapon.requiredRep) { GameEvents.emit('toast', `Нужна репутация ${weapon.requiredRep}`); return; }
-    if (save.coins < weapon.price) { GameEvents.emit('toast', 'Недостаточно золота'); return; }
-    this.saves.mutate((state) => {
-      state.coins -= weapon.price;
-      state.ownedWeapons.push(weaponId);
-      state.equippedWeapon = weaponId;
-      state.equipment.weapon = weaponId;
-    }, true);
+    const result = this.shop.purchase(weaponId);
+    GameEvents.emit('toast', result.message);
+    if (!result.ok || !result.weapon) return;
     this.onQuestProgress(this.quests.record('purchase', weaponId));
+    this.heldWeapon?.setTexture(`held-${weaponId}`).setScale(1.95).setTint(Phaser.Display.Color.HexStringToColor(result.weapon.accent).color);
+    this.time.delayedCall(220, () => this.heldWeapon?.setScale(1.45).clearTint());
     this.sfx.coin();
-    GameEvents.emit('toast', `Куплено и экипировано: ${weapon.name}`);
     this.emitHud(true);
   }
 

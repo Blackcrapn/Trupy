@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { WEAPON_VISUALS } from '../data/weaponVisuals';
 
 const COLORS = {
   outline: '#171821',
@@ -11,6 +12,7 @@ export function createPixelTextures(scene: Phaser.Scene): void {
   createHeroFrames(scene);
   createNpcTextures(scene);
   createEnemyTextures(scene);
+  createHeldWeaponTextures(scene);
   createWorldTextures(scene);
   createEffects(scene);
 }
@@ -137,6 +139,29 @@ function createEnemyTextures(scene: Phaser.Scene): void {
   makeEnemy('ashborn', '#a8473d', '#ffd0a3', 'humanoid');
   makeEnemy('nameless', '#8f416e', '#ffc1e4', 'boss');
   makeEnemy('cinderlord', '#ba4938', '#fff0ba', 'boss');
+}
+
+function createHeldWeaponTextures(scene: Phaser.Scene): void {
+  WEAPON_VISUALS.forEach((visual) => {
+    canvas(scene, `held-${visual.id}`, 28, 28, (ctx) => {
+      ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(5, 22, 20, 3);
+      if (visual.id === 'graveaxe') {
+        ctx.fillStyle = visual.secondary; ctx.fillRect(5, 12, 20, 4);
+        ctx.fillStyle = visual.primary; ctx.fillRect(16, 5, 9, 12); ctx.fillRect(20, 4, 5, 4);
+        ctx.fillStyle = visual.glow; ctx.fillRect(19, 6, 4, 2);
+      } else if (visual.id === 'witchbow') {
+        ctx.strokeStyle = visual.primary; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(14, 14, 9, -1.2, 1.2); ctx.stroke();
+        ctx.fillStyle = visual.secondary; ctx.fillRect(5, 13, 19, 2); ctx.fillStyle = visual.glow; ctx.fillRect(21, 12, 5, 4);
+      } else if (visual.id === 'ashstaff' || visual.id === 'reliquary') {
+        ctx.fillStyle = visual.secondary; ctx.fillRect(4, 12, 20, 4);
+        ctx.fillStyle = visual.primary; ctx.fillRect(19, 7, 7, 13); ctx.fillStyle = visual.glow; ctx.fillRect(20, 5, 6, 6); ctx.fillRect(22, 3, 3, 3);
+      } else if (visual.id === 'bogreaper') {
+        ctx.fillStyle = visual.secondary; ctx.fillRect(4, 13, 19, 4); ctx.fillStyle = visual.primary; ctx.fillRect(18, 7, 8, 4); ctx.fillRect(22, 9, 4, 8); ctx.fillStyle = visual.glow; ctx.fillRect(21, 8, 4, 2);
+      } else {
+        ctx.fillStyle = visual.secondary; ctx.fillRect(3, 13, 10, 4); ctx.fillStyle = visual.primary; ctx.fillRect(11, 11, 14, 5); ctx.fillRect(21, 8, 5, 5); ctx.fillStyle = visual.glow; ctx.fillRect(15, 12, 9, 2);
+      }
+    });
+  });
 }
 
 function createWorldTextures(scene: Phaser.Scene): void {

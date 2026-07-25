@@ -1,5 +1,6 @@
 import { BATTLE_PASS, QUESTS, WEAPONS } from '../data/content';
 import { ITEMS, RARITY_COLOR, RARITY_LABEL, getItem } from '../data/items';
+import { getWeaponVisual } from '../data/weaponVisuals';
 import { BUILDINGS, MAP_RIVER, MAP_ROADS, MAP_SHAPES, RIFT_POINTS, WORLD_HEIGHT, WORLD_WIDTH } from '../data/world';
 import { GameEvents } from '../game/events';
 import type { DialoguePayload, HudSnapshot, ItemCategory, PlayerSave } from '../game/types';
@@ -64,14 +65,16 @@ export class GameUI {
           <button data-panel="inventory"><span>I</span>Инвентарь</button>
           <button data-panel="map"><span>M</span>Карта</button>
           <button data-panel="pass"><span>B</span>Пропуск</button>
+          <button data-panel="shop"><span>◆</span>Магазин</button>
           <button data-panel="pause"><span>Esc</span>Меню</button>
         </nav>
 
         <div class="weapon-slot" id="weapon-slot">
           <span id="weapon-icon">⚔</span>
-          <div><small>ОРУЖИЕ</small><strong id="weapon-name">Ржавый клинок</strong></div>
-          <kbd>1</kbd>
+          <div><small id="weapon-meta">MELEE • УРОН 24</small><strong id="weapon-name">Ржавый клинок</strong></div>
+          <kbd id="weapon-key">1</kbd>
         </div>
+        <div class="weapon-hotbar" id="weapon-hotbar" aria-label="Быстрый выбор оружия"></div>
         <button class="potion-slot" id="potion-button" aria-label="Использовать зелье"><span>♥</span><strong id="potion-count">2</strong><kbd>F</kbd></button>
         <div class="ability-bar">
           <button class="ability-slot dash ready" data-ui-ability="dash" aria-label="Рывок"><span>➤</span><small>РЫВОК</small><kbd>SHIFT</kbd><b id="dash-cooldown"></b></button>
@@ -256,6 +259,9 @@ export class GameUI {
     const weapon = WEAPONS.find((item) => item.id === snapshot.equippedWeapon) ?? WEAPONS[0];
     this.text('#weapon-icon', weapon.icon);
     this.text('#weapon-name', weapon.name);
+    this.text('#weapon-meta', `${weapon.kind.toUpperCase()} • УРОН ${weapon.damage}`);
+    this.text('#weapon-key', String(Math.max(1, WEAPONS.findIndex((entry) => entry.id === weapon.id) + 1)));
+    this.renderWeaponHotbar(snapshot);
     const weaponSlot = this.root.querySelector<HTMLElement>('#weapon-slot');
     if (weaponSlot) weaponSlot.style.setProperty('--weapon-accent', weapon.accent);
     const tracker = this.root.querySelector<HTMLElement>('#quest-tracker');
@@ -270,6 +276,21 @@ export class GameUI {
       this.width('#quest-progress-fill', 0);
       tracker?.classList.remove('ready');
     }
+  }
+
+  private renderWeaponHotbar(snapshot: HudSnapshot): void {
+    const hotbar = this.root.querySelector<HTMLElement>('#weapon-hotbar');
+    if (!hotbar) return;
+    hotbar.innerHTML = WEAPONS.map((weapon, index) => {
+      const owned = snapshot.ownedWeapons.includes(weapon.id);
+      const active = snapshot.equippedWeapon === weapon.id;
+      const visual = getWeaponVisual(weapon.id);
+      return `<button class="hotbar-weapon ${owned ? 'owned' : 'locked'} ${active ? 'active' : ''}" data-hotbar-weapon="${owned ? weapon.id : ''}" style="--weapon-color:${weapon.accent}" ${owned ? '' : 'disabled'} title="${weapon.name} • ${visual.bonusLabel}"><kbd>${index + 1}</kbd><span>${weapon.icon}</span><small>${owned ? weapon.damage : `◆${weapon.price}`}</small></button>`;
+    }).join('');
+    hotbar.querySelectorAll<HTMLElement>('[data-hotbar-weapon]').forEach((button) => {
+      if (button.dataset.hotbarWeapon) button.addEventListener('click', () => GameEvents.emit('equip', button.dataset.hotbarWeapon));
+    });
+    hotbar.querySelector('.hotbar-weapon.active')?.scrollIntoView({ inline: 'center', block: 'nearest' });
   }
 
   private openPanel(panel: string): void {
@@ -379,10 +400,14 @@ export class GameUI {
 
   private shopHtml(): string {
     const owned = this.snapshot?.ownedWeapons ?? [];
-    return `<div class="panel-intro split"><p>Руна торгует только за золото, заработанное в Долине. Репутация открывает редкие образцы.</p><div class="coin-chip">◆ ${this.snapshot?.coins ?? 0}</div></div><div class="weapon-grid shop-grid">${WEAPONS.filter((weapon) => weapon.price > 0).map((weapon) => {
+    const current = WEAPONS.find((weapon) => weapon.id === this.snapshot?.equippedWeapon) ?? WEAPONS[0];
+    return `<div class="shop-header"><div><span class="eyebrow">ОРУЖЕЙНАЯ РУНЫ</span><h3>Золото решает. Репутация открывает редкости.</h3><p>Сравните урон, скорость, дистанцию и преимущество против разных врагов.</p></div><div class="shop-wallet"><small>ВАШЕ ЗОЛОТО</small><strong>◆ ${this.snapshot?.coins ?? 0}</strong></div></div><div class="weapon-grid shop-grid">${WEAPONS.filter((weapon) => weapon.price > 0).map((weapon) => {
       const isOwned = owned.includes(weapon.id);
       const locked = (this.snapshot?.reputation ?? 0) < weapon.requiredRep;
-      return `<article class="weapon-card ${isOwned ? 'owned' : ''}" style="--accent:${weapon.accent}"><div class="weapon-art">${weapon.icon}</div><span>${weapon.kind.toUpperCase()} • УРОН ${weapon.damage}</span><h3>${weapon.name}</h3><p>${weapon.description}</p><div class="weapon-meta"><b>◆ ${weapon.price}</b><small>РЕП. ${weapon.requiredRep}</small></div><button data-buy="${weapon.id}" ${isOwned || locked ? 'disabled' : ''}>${isOwned ? 'КУПЛЕНО' : locked ? `НУЖНА РЕП. ${weapon.requiredRep}` : 'КУПИТЬ'}</button></article>`;
+      const affordable = (this.snapshot?.coins ?? 0) >= weapon.price;
+      const visual = getWeaponVisual(weapon.id);
+      const delta = weapon.damage - current.damage;
+      return `<article class="weapon-card shop-weapon ${isOwned ? 'owned' : ''}" style="--accent:${weapon.accent}"><div class="weapon-art">${weapon.icon}</div><span>${weapon.kind.toUpperCase()} • ${visual.bonusLabel}</span><h3>${weapon.name}</h3><p>${weapon.description}</p><div class="compare-grid"><span>Урон <b>${weapon.damage}</b><em class="${delta >= 0 ? 'positive' : 'negative'}">${delta >= 0 ? '+' : ''}${delta}</em></span><span>Скорость <b>${(1000 / weapon.cooldown).toFixed(1)}/с</b></span><span>Дистанция <b>${weapon.range}</b></span><span>Требование <b>Реп. ${weapon.requiredRep}</b></span></div><div class="weapon-meta"><b>◆ ${weapon.price}</b><small>${isOwned ? 'В КОЛЛЕКЦИИ' : locked ? 'НЕДОСТАТОЧНО РЕПУТАЦИИ' : affordable ? 'ДОСТУПНО' : 'НЕ ХВАТАЕТ ЗОЛОТА'}</small></div><button data-buy="${weapon.id}" ${isOwned || locked || !affordable ? 'disabled' : ''}>${isOwned ? 'КУПЛЕНО' : locked ? `НУЖНА РЕП. ${weapon.requiredRep}` : !affordable ? `НУЖНО ◆ ${weapon.price}` : `КУПИТЬ ЗА ◆ ${weapon.price}`}</button>${isOwned ? `<button class="subtle-equip" data-equip="${weapon.id}" ${this.snapshot?.equippedWeapon === weapon.id ? 'disabled' : ''}>${this.snapshot?.equippedWeapon === weapon.id ? 'ЭКИПИРОВАНО' : 'ЭКИПИРОВАТЬ'}</button>` : ''}</article>`;
     }).join('')}</div>`;
   }
 
@@ -418,7 +443,7 @@ export class GameUI {
   private pauseHtml(): string {
     const settings = this.save?.settings;
     const slider = (key: 'masterVolume' | 'musicVolume' | 'sfxVolume' | 'ambienceVolume', label: string) => `<label class="volume-row"><span>${label}<b>${Math.round((settings?.[key] ?? 0) * 100)}%</b></span><input type="range" min="0" max="1" step="0.05" value="${settings?.[key] ?? 0}" data-volume="${key}"></label>`;
-    return `<div class="pause-layout v2"><div class="pause-copy"><span class="eyebrow">ВЕРСИЯ 2 • РАСШИРЕННАЯ ДОЛИНА</span><p>Прогресс сохраняется автоматически, включая инвентарь, экипировку, открытые районы и текущую сцену.</p><dl><div><dt>Уровень</dt><dd>${this.snapshot?.level ?? 1}</dd></div><div><dt>Репутация</dt><dd>${this.snapshot?.reputation ?? 0}</dd></div><div><dt>Открыто районов</dt><dd>${this.snapshot?.discoveredLocations.length ?? 0}/9</dd></div><div><dt>Заданий завершено</dt><dd>${this.snapshot?.quests.filter((q) => q.status === 'completed').length ?? 0}</dd></div></dl></div><div class="audio-settings"><h3>Звук</h3>${slider('masterVolume','Общая громкость')}${slider('musicVolume','Музыка')}${slider('sfxVolume','Эффекты')}${slider('ambienceVolume','Окружение')}<button data-toggle-sound>${settings?.sound ? 'ВЫКЛЮЧИТЬ ВЕСЬ ЗВУК' : 'ВКЛЮЧИТЬ ЗВУК'}</button></div><div class="pause-actions"><button data-resume>ПРОДОЛЖИТЬ</button><button data-toggle-motion>${settings?.reducedMotion ? 'АНИМАЦИИ: МИНИМУМ' : 'АНИМАЦИИ: ПОЛНЫЕ'}</button><button data-toggle-quality>КАЧЕСТВО: ${(settings?.quality ?? 'auto').toUpperCase()}</button><button data-fullscreen>ПОЛНЫЙ ЭКРАН</button><button class="danger" data-reset>НАЧАТЬ ЗАНОВО</button></div><div class="controls-card"><h3>Управление</h3><p><kbd>WASD</kbd> Движение</p><p><kbd>E</kbd> Действие / дверь</p><p><kbd>ЛКМ</kbd> / <kbd>Space</kbd> Атака</p><p><kbd>F</kbd> Быстрое зелье</p><p><kbd>Q I M B</kbd> Меню</p></div></div>`;
+    return `<div class="pause-layout v2"><div class="pause-copy"><span class="eyebrow">ВЕРСИЯ 4 • ОРУЖЕЙНЫЙ РЫВОК</span><p>Прогресс сохраняется автоматически, включая инвентарь, экипировку, открытые районы и текущую сцену.</p><dl><div><dt>Уровень</dt><dd>${this.snapshot?.level ?? 1}</dd></div><div><dt>Репутация</dt><dd>${this.snapshot?.reputation ?? 0}</dd></div><div><dt>Открыто районов</dt><dd>${this.snapshot?.discoveredLocations.length ?? 0}/9</dd></div><div><dt>Заданий завершено</dt><dd>${this.snapshot?.quests.filter((q) => q.status === 'completed').length ?? 0}</dd></div></dl></div><div class="audio-settings"><h3>Звук</h3>${slider('masterVolume','Общая громкость')}${slider('musicVolume','Музыка')}${slider('sfxVolume','Эффекты')}${slider('ambienceVolume','Окружение')}<button data-toggle-sound>${settings?.sound ? 'ВЫКЛЮЧИТЬ ВЕСЬ ЗВУК' : 'ВКЛЮЧИТЬ ЗВУК'}</button></div><div class="pause-actions"><button data-resume>ПРОДОЛЖИТЬ</button><button data-toggle-motion>${settings?.reducedMotion ? 'АНИМАЦИИ: МИНИМУМ' : 'АНИМАЦИИ: ПОЛНЫЕ'}</button><button data-toggle-quality>КАЧЕСТВО: ${(settings?.quality ?? 'auto').toUpperCase()}</button><button data-fullscreen>ПОЛНЫЙ ЭКРАН</button><button class="danger" data-reset>НАЧАТЬ ЗАНОВО</button></div><div class="controls-card"><h3>Управление</h3><p><kbd>WASD</kbd> Движение</p><p><kbd>E</kbd> Действие / дверь</p><p><kbd>ЛКМ</kbd> / <kbd>Space</kbd> Атака</p><p><kbd>F</kbd> Быстрое зелье</p><p><kbd>Q I M B</kbd> Меню</p></div></div>`;
   }
 
   private bindPanelActions(): void {

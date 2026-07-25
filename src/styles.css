@@ -254,7 +254,7 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
   .quick-nav { right: calc(8px + var(--safe-right)); top: calc(105px + var(--safe-top)); bottom: auto; display: grid; grid-template-columns: repeat(2, 34px); gap: 4px; }
   .quick-nav button { min-width: 34px; width: 34px; height: 32px; padding: 2px; font-size: 0; }
   .quick-nav button span { font-size: 8px; }
-  .quick-nav button:nth-child(5) { display: none; }
+  .quick-nav button:nth-child(5), .quick-nav button:nth-child(6) { display: none; }
   .weapon-slot { left: 50%; bottom: calc(154px + var(--safe-bottom)); min-width: 166px; height: 48px; transform: translateX(-50%); padding: 5px 24px 5px 5px; }
   .weapon-slot > span { width: 36px; height: 34px; font-size: 19px; }
   .weapon-slot small { display: none; }
@@ -482,4 +482,47 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
 @media (max-width:520px) {
   .mobile-actions { right:calc(12px + var(--safe-right)); }
   .mobile-button.interact { left:70px; }
+}
+
+/* Version 4: weapon store and hotbar */
+.weapon-hotbar { position:absolute; left:calc(18px + var(--safe-left)); bottom:calc(84px + var(--safe-bottom)); display:flex; gap:5px; max-width:min(560px,calc(100vw - 36px)); padding:5px; background:rgba(10,12,19,.9); border:2px solid #464a59; box-shadow:4px 4px #0008; overflow-x:auto; pointer-events:auto; scrollbar-width:none; }
+.weapon-hotbar::-webkit-scrollbar { display:none; }
+.hotbar-weapon { --weapon-color:#aaa; position:relative; width:48px; min-width:48px; height:48px; padding:4px; display:grid; place-items:center; background:#171923; border:2px solid #3f424f !important; color:#777a86; box-shadow:inset 0 0 16px #0005; }
+.hotbar-weapon.owned { color:var(--weapon-color); border-color:color-mix(in srgb,var(--weapon-color) 55%,#484b58) !important; }
+.hotbar-weapon.active { transform:translateY(-4px); color:#fff; border-color:var(--weapon-color) !important; background:color-mix(in srgb,var(--weapon-color) 18%,#151720); box-shadow:0 0 0 2px #0b0d13,0 0 16px color-mix(in srgb,var(--weapon-color) 55%,transparent); }
+.hotbar-weapon.locked { filter:grayscale(1); opacity:.48; cursor:not-allowed; }
+.hotbar-weapon span { font-size:20px; text-shadow:0 0 9px color-mix(in srgb,var(--weapon-color) 65%,transparent); }
+.hotbar-weapon kbd { position:absolute; left:2px; top:2px; padding:1px 3px; font-size:6px; }
+.hotbar-weapon small { position:absolute; right:2px; bottom:1px; color:#b9b4c0; font-size:6px; }
+
+.shop-header { margin-bottom:18px; padding:18px 20px; display:flex; justify-content:space-between; align-items:center; gap:18px; background:linear-gradient(110deg,#39282a,#201a24 62%,#151720); border:2px solid #73504c; }
+.shop-header h3 { margin:5px 0; font:17px 'Russo One'; }
+.shop-header p { margin:0; color:#b7afb4; font-size:9px; }
+.shop-wallet { min-width:140px; padding:12px; display:grid; gap:6px; text-align:center; background:#11131a; border:2px solid #8b7043; }
+.shop-wallet small { color:#968c78; font-size:7px; letter-spacing:.16em; }
+.shop-wallet strong { color:#f0cb72; font:20px 'Russo One'; }
+.shop-weapon { min-height:330px; }
+.compare-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin:3px 0 12px; }
+.compare-grid span { padding:6px; display:grid; grid-template-columns:1fr auto auto; gap:4px; color:#8f909d; background:#10121a; border:1px solid #333643; font-size:7px; }
+.compare-grid b { color:#ddd7df; }
+.compare-grid em { font-style:normal; }
+.compare-grid em.positive { color:#75c98d; }
+.compare-grid em.negative { color:#d87984; }
+.weapon-card button.subtle-equip { margin-top:6px; background:#242733; border-color:#505463; }
+
+@media (max-width:850px), (pointer:coarse) {
+  .weapon-slot { display:none; }
+  .weapon-hotbar { left:50%; bottom:calc(162px + var(--safe-bottom)); width:min(290px,74vw); transform:translateX(-50%); }
+  .hotbar-weapon { width:46px; min-width:46px; height:46px; }
+  .shop-header { padding:12px; }
+  .shop-header h3 { font-size:13px; }
+  .shop-wallet { min-width:105px; }
+  .shop-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+
+@media (max-width:520px) {
+  .shop-header { align-items:stretch; }
+  .shop-header p { display:none; }
+  .shop-grid { grid-template-columns:1fr; }
+  .weapon-hotbar { width:min(270px,70vw); }
 }

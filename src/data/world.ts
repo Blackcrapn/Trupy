@@ -23,6 +23,7 @@ export interface BuildingDefinition {
   wall: number;
   roof: number;
   doorX: number;
+  style?: 'home' | 'inn' | 'forge' | 'cottage' | 'chapel' | 'marsh' | 'warehouse' | 'citadel';
   interior?: string;
 }
 
@@ -34,7 +35,7 @@ export interface InteriorDefinition {
   floor: number;
   wall: number;
   accent: number;
-  ambience: 'home' | 'inn' | 'forge' | 'herbalist' | 'house' | 'chapel';
+  ambience: 'home' | 'inn' | 'forge' | 'herbalist' | 'house' | 'chapel' | 'marsh' | 'warehouse' | 'citadel';
   chest?: boolean;
 }
 
@@ -80,6 +81,12 @@ export const MAP_ROADS: number[][][] = [
 
 export const MAP_RIVER = '2480,0 2740,0 2740,3000 2480,3000';
 
+export const REGION_ENTRANCES = [
+  { id: 'home', x: 430, y: 620 }, { id: 'village', x: 900, y: 670 }, { id: 'cemetery', x: 1525, y: 650 },
+  { id: 'forest', x: 1150, y: 1190 }, { id: 'ruins', x: 2280, y: 1080 }, { id: 'marsh', x: 3030, y: 650 },
+  { id: 'mines', x: 3300, y: 1450 }, { id: 'docks', x: 3050, y: 2350 }, { id: 'citadel', x: 3915, y: 1860 },
+] as const;
+
 export const RIFT_POINTS = [
   { id: 'forest_rift', name: 'Лесной разлом', x: 1180, y: 1880, reward: 'moon_charm' },
   { id: 'marsh_rift', name: 'Разлом Чёрной топи', x: 3540, y: 820, reward: 'bogreaper' },
@@ -87,15 +94,15 @@ export const RIFT_POINTS = [
 ] as const;
 
 export const BUILDINGS: BuildingDefinition[] = [
-  { id: 'player_home', name: 'ДОМ ИЗГНАННИКА', x: 430, y: 420, w: 240, h: 170, wall: 0x4c4651, roof: 0x342d3b, doorX: 0, interior: 'player_home' },
-  { id: 'inn', name: 'ПОСТОЯЛЫЙ ДВОР', x: 930, y: 465, w: 190, h: 135, wall: 0x5c5545, roof: 0x40382f, doorX: -28, interior: 'inn' },
-  { id: 'forge', name: 'КУЗНИЦА РУНЫ', x: 1210, y: 520, w: 210, h: 150, wall: 0x5a493c, roof: 0x522e2b, doorX: 28, interior: 'forge' },
-  { id: 'elira_house', name: 'ДОМ ЭЛИРЫ', x: 780, y: 820, w: 155, h: 110, wall: 0x504c43, roof: 0x35332f, doorX: 0, interior: 'elira_house' },
-  { id: 'herbalist', name: 'ЛАВКА ТРАВНИЦЫ', x: 1090, y: 820, w: 180, h: 125, wall: 0x4b513f, roof: 0x313a2f, doorX: 12, interior: 'herbalist' },
-  { id: 'chapel', name: 'ЧАСОВНЯ ПЕПЛА', x: 1820, y: 510, w: 220, h: 175, wall: 0x47484c, roof: 0x292a31, doorX: 0, interior: 'chapel' },
-  { id: 'marsh_hut', name: 'ХИЖИНА ТОПИ', x: 3270, y: 530, w: 180, h: 125, wall: 0x3e4a43, roof: 0x28332f, doorX: -15 },
-  { id: 'dock_house', name: 'СКЛАД ПРИСТАНИ', x: 3020, y: 2290, w: 240, h: 150, wall: 0x46515a, roof: 0x29323a, doorX: 34 },
-  { id: 'citadel_gatehouse', name: 'ВРАТА ЦИТАДЕЛИ', x: 4130, y: 1770, w: 310, h: 190, wall: 0x5a3e42, roof: 0x38252d, doorX: 0 },
+  { id: 'player_home', name: 'ДОМ ИЗГНАННИКА', x: 430, y: 420, w: 240, h: 170, wall: 0x4c4651, roof: 0x342d3b, doorX: 0, style: 'home', interior: 'player_home' },
+  { id: 'inn', name: 'ПОСТОЯЛЫЙ ДВОР', x: 930, y: 465, w: 210, h: 145, wall: 0x5c5545, roof: 0x40382f, doorX: -28, style: 'inn', interior: 'inn' },
+  { id: 'forge', name: 'КУЗНИЦА РУНЫ', x: 1210, y: 520, w: 220, h: 155, wall: 0x5a493c, roof: 0x522e2b, doorX: 28, style: 'forge', interior: 'forge' },
+  { id: 'elira_house', name: 'ДОМ ЭЛИРЫ', x: 790, y: 820, w: 170, h: 120, wall: 0x504c43, roof: 0x35332f, doorX: 0, style: 'cottage', interior: 'elira_house' },
+  { id: 'herbalist', name: 'ЛАВКА ТРАВНИЦЫ', x: 1100, y: 820, w: 190, h: 130, wall: 0x4b513f, roof: 0x313a2f, doorX: 12, style: 'cottage', interior: 'herbalist' },
+  { id: 'chapel', name: 'ЧАСОВНЯ ПЕПЛА', x: 1820, y: 510, w: 220, h: 180, wall: 0x47484c, roof: 0x292a31, doorX: 0, style: 'chapel', interior: 'chapel' },
+  { id: 'marsh_hut', name: 'ХИЖИНА ТОПИ', x: 3270, y: 530, w: 190, h: 135, wall: 0x3e4a43, roof: 0x28332f, doorX: -15, style: 'marsh', interior: 'marsh_hut' },
+  { id: 'dock_house', name: 'СКЛАД ПРИСТАНИ', x: 3020, y: 2290, w: 250, h: 155, wall: 0x46515a, roof: 0x29323a, doorX: 34, style: 'warehouse', interior: 'dock_house' },
+  { id: 'citadel_gatehouse', name: 'ВРАТА ЦИТАДЕЛИ', x: 4130, y: 1770, w: 320, h: 200, wall: 0x5a3e42, roof: 0x38252d, doorX: 0, style: 'citadel', interior: 'citadel_gatehouse' },
 ];
 
 export const INTERIORS: InteriorDefinition[] = [
@@ -105,6 +112,9 @@ export const INTERIORS: InteriorDefinition[] = [
   { id: 'herbalist', name: 'Лавка травницы', width: 860, height: 600, floor: 0x3f493a, wall: 0x242d27, accent: 0x79bd75, ambience: 'herbalist', chest: true },
   { id: 'elira_house', name: 'Дом Элиры', width: 820, height: 570, floor: 0x494044, wall: 0x29242b, accent: 0xc98fa8, ambience: 'house', chest: true },
   { id: 'chapel', name: 'Часовня и склеп', width: 980, height: 760, floor: 0x3d3e43, wall: 0x202127, accent: 0x9b88be, ambience: 'chapel', chest: true },
+  { id: 'marsh_hut', name: 'Хижина Чёрной топи', width: 880, height: 620, floor: 0x35473f, wall: 0x1f2b27, accent: 0x73c69d, ambience: 'marsh', chest: true },
+  { id: 'dock_house', name: 'Склад пристани', width: 980, height: 650, floor: 0x3c4850, wall: 0x202931, accent: 0x7eabc5, ambience: 'warehouse', chest: true },
+  { id: 'citadel_gatehouse', name: 'Караульня цитадели', width: 1040, height: 720, floor: 0x4a3337, wall: 0x251a1e, accent: 0xe16d54, ambience: 'citadel', chest: true },
 ];
 
 export const getBuildingDoor = (building: BuildingDefinition) => ({

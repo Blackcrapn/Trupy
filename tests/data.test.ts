@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { BATTLE_PASS, ENEMIES, NPCS, QUESTS, WEAPONS } from '../src/data/content';
 import { ITEMS } from '../src/data/items';
-import { BUILDINGS, INTERIORS, LOCATIONS, MAP_ROADS, MAP_SHAPES, RIFT_POINTS, WORLD_HEIGHT, WORLD_WIDTH } from '../src/data/world';
+import { BUILDINGS, INTERIORS, LOCATIONS, MAP_ROADS, MAP_SHAPES, REGION_ENTRANCES, RIFT_POINTS, WORLD_HEIGHT, WORLD_WIDTH } from '../src/data/world';
 import { InventorySystem } from '../src/systems/InventorySystem';
 import { QuestSystem } from '../src/systems/QuestSystem';
 import { SaveSystem } from '../src/systems/SaveSystem';
+import { WeaponShopSystem } from '../src/systems/WeaponShopSystem';
 import type { ObjectiveType } from '../src/game/types';
 
 const unique = (values: string[], label: string) => {
@@ -20,7 +21,7 @@ unique(MAP_SHAPES.map((item) => item.id), 'Map shapes');
 unique(RIFT_POINTS.map((item) => item.id), 'Rifts');
 unique(INTERIORS.map((item) => item.id), 'Interiors');
 assert.equal(LOCATIONS.length, 9, 'Expanded world contains nine regions');
-assert.equal(INTERIORS.length, 6, 'Six interiors are available');
+assert.equal(INTERIORS.length, 9, 'Nine interiors are available');
 assert.ok(WORLD_WIDTH >= 4600 && WORLD_HEIGHT >= 3000, 'World dimensions are expanded');
 assert.deepEqual(new Set(MAP_SHAPES.map((shape) => shape.id)), new Set(LOCATIONS.map((location) => location.id)), 'Map and world use the same regions');
 for (const [index, location] of LOCATIONS.entries()) {
@@ -30,8 +31,27 @@ for (const [index, location] of LOCATIONS.entries()) {
   }
 }
 for (const road of MAP_ROADS) for (const [x, y] of road) assert.ok(x >= 0 && x <= WORLD_WIDTH && y >= 0 && y <= WORLD_HEIGHT, 'Road points stay inside the world');
+assert.equal(REGION_ENTRANCES.length, LOCATIONS.length, 'Every region defines an entrance');
+const containsPoint = (points: Array<[number, number]>, x: number, y: number) => {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const [xi, yi] = points[i]; const [xj, yj] = points[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+};
+for (const entrance of REGION_ENTRANCES) {
+  const shape = MAP_SHAPES.find((entry) => entry.id === entrance.id)!;
+  const points = shape.points.split(' ').map((pair) => pair.split(',').map(Number) as [number, number]);
+  assert.ok(containsPoint(points, entrance.x, entrance.y), `Entrance for ${entrance.id} lies inside its region`);
+}
 for (const rift of RIFT_POINTS) assert.ok(rift.x >= 0 && rift.x <= WORLD_WIDTH && rift.y >= 0 && rift.y <= WORLD_HEIGHT, `Rift ${rift.id} stays inside the world`);
-for (const building of BUILDINGS.filter((entry) => entry.interior)) assert.ok(INTERIORS.some((interior) => interior.id === building.interior), `Building ${building.id} points to a valid interior`);
+assert.equal(BUILDINGS.length, 9, 'Nine world buildings are defined');
+assert.ok(BUILDINGS.every((building) => Boolean(building.interior)), 'Every visible building is enterable');
+for (const building of BUILDINGS) {
+  assert.ok(INTERIORS.some((interior) => interior.id === building.interior), `Building ${building.id} points to a valid interior`);
+  assert.ok(Math.abs(building.doorX) <= building.w / 2 - 32, `Door for ${building.id} leaves a navigable opening`);
+}
 
 const weaponIds = new Set(WEAPONS.map((item) => item.id));
 const questIds = new Set(QUESTS.map((item) => item.id));
@@ -97,6 +117,16 @@ assert.equal(inventory.quantity('bone_shard'), 2, 'Transferred items reach the i
 saves.mutate((save) => { save.health = 40; }, true);
 assert.ok(inventory.use('blood_vial').used, 'Consumables can be used');
 assert.ok(saves.get().health > 40, 'Healing consumable restores health');
+const shop = new WeaponShopSystem(saves);
+saves.mutate((save) => { save.coins = 1000; save.reputation = 20; }, true);
+const coinsBeforePurchase = saves.get().coins;
+const purchase = shop.purchase('graveaxe');
+assert.ok(purchase.ok, 'Weapon can be purchased with earned gold');
+assert.equal(saves.get().coins, coinsBeforePurchase - 90, 'Purchase deducts the exact gold price');
+assert.ok(saves.get().ownedWeapons.includes('graveaxe'), 'Purchased weapon is added to the collection');
+assert.equal(saves.get().equippedWeapon, 'graveaxe', 'Purchased weapon is equipped immediately');
+assert.equal(shop.purchase('graveaxe').ok, false, 'A weapon cannot be purchased twice');
+saves.mutate((save) => { save.reputation = 0; }, true);
 const finish = (id: string, events: Array<[ObjectiveType, string, number]>) => {
   assert.ok(questSystem.accept(id), `Quest ${id} can be accepted`);
   for (const [type, target, amount] of events) questSystem.record(type, target, amount);

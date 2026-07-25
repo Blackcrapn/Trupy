@@ -6,6 +6,7 @@ import { AudioManager, audio } from '../systems/AudioManager';
 import { InventorySystem } from '../systems/InventorySystem';
 import { QuestSystem } from '../systems/QuestSystem';
 import { SaveSystem } from '../systems/SaveSystem';
+import { WeaponShopSystem } from '../systems/WeaponShopSystem';
 import { GameUI } from '../ui/GameUI';
 import { GameEvents } from './events';
 import type { HudSnapshot, PlayerSave } from './types';
@@ -19,10 +20,12 @@ interface InteriorData {
 export class InteriorScene extends Phaser.Scene {
   private saves!: SaveSystem;
   private inventory!: InventorySystem;
+  private shop!: WeaponShopSystem;
   private quests!: QuestSystem;
   private ui!: GameUI;
   private definition!: InteriorDefinition;
   private player!: Phaser.Physics.Arcade.Sprite;
+  private heldWeapon!: Phaser.GameObjects.Image;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private mobileMove = new Phaser.Math.Vector2();
@@ -49,6 +52,7 @@ export class InteriorScene extends Phaser.Scene {
   create(): void {
     this.saves = new SaveSystem();
     this.inventory = new InventorySystem(this.saves);
+    this.shop = new WeaponShopSystem(this.saves);
     this.quests = new QuestSystem(this.saves);
     this.saves.mutate((save) => { save.currentScene = this.definition.id; }, true);
     audio.setMix(this.audioMix(this.saves.get()));
@@ -71,6 +75,7 @@ export class InteriorScene extends Phaser.Scene {
     this.updatePrompt();
     GameEvents.emit('ability-cooldown', { dash: Math.max(0, (this.dashReadyAt - time) / 1000), special: Math.max(0, (this.specialReadyAt - time) / 1000) });
     this.player.setDepth(this.player.y / 10 + 20);
+    this.syncHeldWeapon();
   }
 
   private drawRoom(): void {
@@ -107,6 +112,9 @@ export class InteriorScene extends Phaser.Scene {
     if (ambience === 'forge') this.drawForge(furniture, width - 190, height - 210);
     if (ambience === 'herbalist') this.drawShelves(furniture, width - 165, height / 2);
     if (ambience === 'chapel') this.drawChapel(furniture, width, height);
+    if (ambience === 'marsh') this.drawMarshInterior(furniture, width, height);
+    if (ambience === 'warehouse') this.drawWarehouse(furniture, width, height);
+    if (ambience === 'citadel') this.drawCitadelInterior(furniture, width, height);
 
     this.add.text(width / 2, 54, this.definition.name.toUpperCase(), {
       fontFamily: 'monospace', fontSize: '16px', fontStyle: 'bold', color: '#d8d3dc', stroke: '#101119', strokeThickness: 5, letterSpacing: 4,
@@ -153,6 +161,46 @@ export class InteriorScene extends Phaser.Scene {
     graphics.fillRect(width / 2 - 24, 135, 48, 8);
   }
 
+  private drawMarshInterior(graphics: Phaser.GameObjects.Graphics, width: number, height: number): void {
+    graphics.fillStyle(0x171821, 1).fillCircle(width / 2 + 190, height / 2, 72);
+    graphics.fillStyle(0x446f5c, 1).fillCircle(width / 2 + 190, height / 2 + 4, 62);
+    graphics.fillStyle(0x78c99b, .8).fillCircle(width / 2 + 190, height / 2 + 8, 38);
+    for (let index = 0; index < 7; index += 1) {
+      const x = 120 + index * 72;
+      graphics.fillStyle(index % 2 ? 0x7ec18c : 0x9c75b2, 1).fillRect(x, 115, 12, 28);
+      graphics.fillStyle(0x4c3b2f, 1).fillRect(x - 5, 141, 22, 8);
+    }
+  }
+
+  private drawWarehouse(graphics: Phaser.GameObjects.Graphics, width: number, height: number): void {
+    for (let row = 0; row < 2; row += 1) {
+      for (let column = 0; column < 4; column += 1) {
+        const x = 140 + column * 155;
+        const y = 140 + row * 120;
+        graphics.fillStyle(0x171821, 1).fillRect(x - 4, y + 7, 94, 72);
+        graphics.fillStyle(row ? 0x705139 : 0x5d4938, 1).fillRect(x, y, 86, 70);
+        graphics.lineStyle(3, 0xa47b4e, .75).strokeRect(x, y, 86, 70).lineBetween(x, y, x + 86, y + 70).lineBetween(x + 86, y, x, y + 70);
+      }
+    }
+    graphics.fillStyle(0x8b7658, 1).fillRect(width - 220, height - 220, 130, 24);
+  }
+
+  private drawCitadelInterior(graphics: Phaser.GameObjects.Graphics, width: number, height: number): void {
+    graphics.fillStyle(0x782f36, 1).fillRect(130, 95, 90, 180);
+    graphics.fillStyle(0xc85a43, 1).fillRect(width - 220, 95, 90, 180);
+    for (let rack = 0; rack < 3; rack += 1) {
+      const y = 160 + rack * 105;
+      graphics.fillStyle(0x171821, 1).fillRect(260, y, width - 520, 18);
+      for (let weapon = 0; weapon < 6; weapon += 1) {
+        const x = 290 + weapon * ((width - 580) / 5);
+        graphics.fillStyle(weapon % 2 ? 0xd0a15d : 0xaeb8c2, 1).fillRect(x, y - 48, 5, 62);
+        graphics.fillRect(x - 8, y - 38, 21, 5);
+      }
+    }
+    graphics.fillStyle(0xe45d43, .65).fillCircle(width / 2, height / 2, 38);
+    graphics.fillStyle(0xffbd62, .85).fillCircle(width / 2, height / 2 + 5, 20);
+  }
+
   private createInteriorParticles(): void {
     const count = this.saves.get().settings.quality === 'low' ? 8 : 20;
     for (let index = 0; index < count; index += 1) {
@@ -166,10 +214,21 @@ export class InteriorScene extends Phaser.Scene {
     this.player = this.physics.add.sprite(this.definition.width / 2, this.definition.height - 145, 'hero-up-0').setScale(1.65).setCollideWorldBounds(true);
     const body = this.player.body as Phaser.Physics.Arcade.Body;
     body.setSize(16, 12).setOffset(8, 26);
+    this.heldWeapon = this.add.image(this.player.x, this.player.y, `held-${this.saves.get().equippedWeapon}`).setScale(1.45).setOrigin(.2, .5).setDepth(25);
+    this.syncHeldWeapon();
+  }
+
+  private syncHeldWeapon(): void {
+    if (!this.heldWeapon?.scene) return;
+    const weaponId = this.saves.get().equippedWeapon;
+    if (this.heldWeapon.texture.key !== `held-${weaponId}`) this.heldWeapon.setTexture(`held-${weaponId}`);
+    document.documentElement.dataset.heldWeapon = weaponId;
+    this.heldWeapon.setPosition(this.player.x + this.facing.x * 10, this.player.y + 5 + this.facing.y * 9).setRotation(this.facing.angle()).setAlpha(this.player.alpha);
+    this.heldWeapon.setDepth(this.facing.y < -.35 ? this.player.depth - 1 : this.player.depth + 2);
   }
 
   private createResident(): void {
-    const residentByRoom: Record<string, string> = { forge: 'runa', herbalist: 'vesna', elira_house: 'elira', chapel: 'gran' };
+    const residentByRoom: Record<string, string> = { forge: 'runa', herbalist: 'vesna', elira_house: 'elira', chapel: 'gran', marsh_hut: 'iva', dock_house: 'ferryman', citadel_gatehouse: 'serah' };
     const npcId = residentByRoom[this.definition.id];
     if (!npcId) return;
     const index = NPCS.findIndex((entry) => entry.id === npcId);
@@ -181,7 +240,10 @@ export class InteriorScene extends Phaser.Scene {
   private setupInput(): void {
     if (!this.input.keyboard) return;
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.keys = this.input.keyboard.addKeys('W,A,S,D,E,F,I,R,SHIFT,ESC,SPACE') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard.addKeys('W,A,S,D,E,F,I,R,SHIFT,ESC,SPACE,ONE,TWO,THREE,FOUR,FIVE,SIX,SEVEN,EIGHT') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: Phaser.GameObjects.GameObject[], _deltaX: number, deltaY: number) => {
+      if (!this.uiLocked) this.cycleWeapon(deltaY > 0 ? 1 : -1);
+    });
   }
 
   private setupUi(): void {
@@ -197,7 +259,8 @@ export class InteriorScene extends Phaser.Scene {
     this.listen<void>('ui-dash', () => this.dash());
     this.listen<void>('ui-special', () => this.interiorSpecial());
     this.listen<void>('ui-heal', () => this.useItem('blood_vial'));
-    this.listen<string>('equip', (id) => { this.inventory.equip(id); audio.ui(); this.emitHud(); });
+    this.listen<string>('equip', (id) => this.equipWeapon(id));
+    this.listen<string>('buy', (id) => this.buyWeapon(id));
     this.listen<string>('equip-item', (id) => { this.inventory.equip(id); audio.ui(); this.emitHud(); });
     this.listen<string>('use-item', (id) => this.useItem(id));
     this.listen<{ itemId?: string; direction?: 'toChest' | 'toInventory' }>('transfer-item', ({ itemId, direction }) => {
@@ -240,6 +303,13 @@ export class InteriorScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.interiorAttack();
     if (Phaser.Input.Keyboard.JustDown(this.keys.SHIFT)) this.dash();
     if (Phaser.Input.Keyboard.JustDown(this.keys.R)) this.interiorSpecial();
+    const weaponKeys = ['ONE','TWO','THREE','FOUR','FIVE','SIX','SEVEN','EIGHT'];
+    weaponKeys.forEach((key, index) => {
+      if (Phaser.Input.Keyboard.JustDown(this.keys[key])) {
+        const weapon = WEAPONS[index];
+        if (weapon && this.saves.get().ownedWeapons.includes(weapon.id)) this.equipWeapon(weapon.id);
+      }
+    });
   }
 
   private updatePrompt(): void {
@@ -275,7 +345,7 @@ export class InteriorScene extends Phaser.Scene {
   }
 
   private openResidentDialogue(): void {
-    const residentByRoom: Record<string, string> = { forge: 'runa', herbalist: 'vesna', elira_house: 'elira', chapel: 'gran' };
+    const residentByRoom: Record<string, string> = { forge: 'runa', herbalist: 'vesna', elira_house: 'elira', chapel: 'gran', marsh_hut: 'iva', dock_house: 'ferryman', citadel_gatehouse: 'serah' };
     const npcId = residentByRoom[this.definition.id];
     const npc = NPCS.find((entry) => entry.id === npcId);
     if (!npc) return;
@@ -284,8 +354,38 @@ export class InteriorScene extends Phaser.Scene {
       vesna: 'Здесь безопасно трогать почти всё. Банку с чёрной крышкой лучше не открывай.',
       elira: 'Дом стал тише после твоего возвращения. Иногда тишина — тоже награда.',
       gran: 'Под часовней есть склеп. Пока печати держатся, мёртвые остаются внизу.',
+      iva: 'В топи стены ставят не от людей, а от того, что смотрит из воды.',
+      ferryman: 'Каждый ящик имеет цену. Иногда золотом, иногда памятью.',
+      serah: 'Здесь хранилось оружие стражи. Возьми подходящее, если заслужишь доверие.',
     };
     GameEvents.emit('dialogue', { speaker: npc.name, subtitle: npc.role.toUpperCase(), text: text[npcId] ?? 'Добро пожаловать.', accent: `#${npc.accent.toString(16).padStart(6, '0')}`, actions: [{ label: npcId === 'runa' ? 'Открыть магазин' : 'Продолжить', event: npcId === 'runa' ? 'open-shop' : 'close', primary: true }, { label: 'Уйти', event: 'close' }] });
+  }
+
+  private cycleWeapon(direction: 1 | -1): void {
+    const owned = WEAPONS.filter((weapon) => this.saves.get().ownedWeapons.includes(weapon.id));
+    if (owned.length < 2) return;
+    const current = owned.findIndex((weapon) => weapon.id === this.saves.get().equippedWeapon);
+    this.equipWeapon(owned[(current + direction + owned.length) % owned.length].id);
+  }
+
+  private equipWeapon(weaponId: string): void {
+    const weapon = WEAPONS.find((entry) => entry.id === weaponId);
+    if (!weapon || !this.inventory.equip(weaponId)) return;
+    this.heldWeapon?.setTexture(`held-${weaponId}`).setScale(1.8).setTint(Phaser.Display.Color.HexStringToColor(weapon.accent).color);
+    this.time.delayedCall(170, () => this.heldWeapon?.setScale(1.45).clearTint());
+    audio.ui();
+    GameEvents.emit('toast', `Экипировано: ${weapon.name}`);
+    this.emitHud();
+  }
+
+  private buyWeapon(weaponId: string): void {
+    const result = this.shop.purchase(weaponId);
+    GameEvents.emit('toast', result.message);
+    if (!result.ok || !result.weapon) return;
+    this.heldWeapon?.setTexture(`held-${weaponId}`).setScale(1.95).setTint(Phaser.Display.Color.HexStringToColor(result.weapon.accent).color);
+    this.time.delayedCall(220, () => this.heldWeapon?.setScale(1.45).clearTint());
+    audio.coin();
+    this.emitHud();
   }
 
   private dash(): void {
@@ -310,6 +410,8 @@ export class InteriorScene extends Phaser.Scene {
     if (this.uiLocked) return;
     const weapon = WEAPONS.find((entry) => entry.id === this.saves.get().equippedWeapon) ?? WEAPONS[0];
     audio.attack(weapon.kind);
+    this.heldWeapon?.setScale(1.8).setTint(Phaser.Display.Color.HexStringToColor(weapon.accent).color);
+    this.time.delayedCall(130, () => this.heldWeapon?.setScale(1.45).clearTint());
     const x = this.player.x + this.facing.x * 38;
     const y = this.player.y + this.facing.y * 38;
     const slash = this.add.rectangle(x, y, 46, 10, Phaser.Display.Color.HexStringToColor(weapon.accent).color, .8).setRotation(this.facing.angle()).setDepth(80);
