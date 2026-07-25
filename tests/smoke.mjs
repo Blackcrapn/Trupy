@@ -15,7 +15,7 @@ async function clickStart(page) {
 async function runDesktop() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
   page.on('console', (message) => { if (message.type() === 'error') errors.push(`console: ${message.text()}`); });
-  page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
+  page.on('pageerror', (error) => errors.push(`pageerror: ${error.stack ?? error.message}`));
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
   await page.waitForSelector('canvas');
   await page.screenshot({ path: 'test-output/menu-desktop.png', fullPage: true });
@@ -27,6 +27,8 @@ async function runDesktop() {
   await page.screenshot({ path: 'test-output/game-desktop.png', fullPage: true });
   assert.equal(await page.locator('.game-ui').count(), 1);
   assert.equal(await page.locator('#coins-label').textContent(), '35');
+  assert.equal(await page.locator('.ability-slot').count(), 2);
+  assert.equal(await page.locator('.minimap-svg').count(), 1);
   const measuredFps = await page.evaluate(() => new Promise((resolve) => {
     let frames = 0;
     const start = performance.now();
@@ -40,7 +42,7 @@ async function runDesktop() {
   await page.waitForFunction(() => document.documentElement.dataset.audio === 'running');
   const saveVersion = await page.evaluate(() => JSON.parse(localStorage.getItem('trupy-save-v1') ?? '{}').version);
   assert.equal(saveVersion, 2);
-  await page.keyboard.press('i');
+  await page.locator('[data-panel="inventory"]').click();
   await page.waitForSelector('#screen-panel[aria-hidden="false"]');
   assert.match(await page.locator('#panel-title').textContent(), /Инвентарь/);
   await page.screenshot({ path: 'test-output/inventory-desktop.png', fullPage: true });
@@ -49,12 +51,14 @@ async function runDesktop() {
   await page.waitForSelector('#screen-panel[aria-hidden="false"]');
   assert.equal(await page.locator('[data-volume]').count(), 4);
   await page.locator('.close-button').click();
-  await page.keyboard.press('m');
+  await page.locator('[data-panel="map"]').click();
   await page.waitForSelector('#screen-panel[aria-hidden="false"]');
-  assert.equal(await page.locator('.map-zone').count(), 9);
+  assert.equal(await page.locator('.world-map .map-zone').count(), 9);
+  assert.equal(await page.locator('.world-map-svg').count(), 1);
+  assert.equal(await page.locator('.world-map .map-rift').count(), 3);
   await page.screenshot({ path: 'test-output/map-desktop.png', fullPage: true });
   await page.locator('.close-button').click();
-  await page.keyboard.press('q');
+  await page.locator('[data-panel="journal"]').click();
   await page.waitForSelector('#screen-panel[aria-hidden="false"]');
   assert.match(await page.locator('#panel-title').textContent(), /Задания/);
   await page.locator('.close-button').click();
@@ -64,6 +68,12 @@ async function runDesktop() {
   await page.screenshot({ path: 'test-output/interior-desktop.png', fullPage: true });
   await page.keyboard.press('e');
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('trupy-save-v1') ?? '{}').currentScene === 'world');
+  await page.waitForTimeout(700);
+  await page.locator('.ability-slot.dash').click();
+  await page.waitForFunction(() => (document.querySelector('#dash-cooldown')?.textContent ?? '').length > 0);
+  await page.waitForTimeout(220);
+  await page.locator('.ability-slot.special').click();
+  await page.waitForFunction(() => (document.querySelector('#special-cooldown')?.textContent ?? '').length > 0);
   await page.close();
 }
 
@@ -80,6 +90,8 @@ async function runMobile() {
   assert.notEqual(display, 'none');
   const joystickBox = await page.locator('#joystick').boundingBox();
   assert.ok(joystickBox && joystickBox.width > 80);
+  assert.equal(await page.locator('.mobile-button.dash').count(), 1);
+  assert.equal(await page.locator('.mobile-button.special').count(), 1);
   await page.locator('[data-panel="inventory"]').click();
   await page.waitForSelector('#screen-panel[aria-hidden="false"]');
   assert.equal(await page.locator('.equipment-paperdoll').count(), 1);

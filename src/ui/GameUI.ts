@@ -1,6 +1,6 @@
 import { BATTLE_PASS, QUESTS, WEAPONS } from '../data/content';
 import { ITEMS, RARITY_COLOR, RARITY_LABEL, getItem } from '../data/items';
-import { WORLD_HEIGHT, WORLD_WIDTH } from '../data/world';
+import { BUILDINGS, MAP_RIVER, MAP_ROADS, MAP_SHAPES, RIFT_POINTS, WORLD_HEIGHT, WORLD_WIDTH } from '../data/world';
 import { GameEvents } from '../game/events';
 import type { DialoguePayload, HudSnapshot, ItemCategory, PlayerSave } from '../game/types';
 
@@ -53,9 +53,7 @@ export class GameUI {
 
         <aside class="minimap-wrap" aria-label="Мини-карта">
           <div class="minimap">
-            <span class="mini-zone home"></span><span class="mini-zone village"></span><span class="mini-zone cemetery"></span>
-            <span class="mini-zone forest"></span><span class="mini-zone ruins"></span><span class="mini-zone marsh"></span><span class="mini-zone mines"></span>
-            <span class="mini-zone docks"></span><span class="mini-zone citadel"></span><span class="mini-road r1"></span><span class="mini-road r2"></span><span class="mini-road r3"></span>
+            ${this.mapSvg(true)}
             <span class="mini-player" id="mini-player"></span>
           </div>
           <span class="location-name" id="location-label">ДОМ ИЗГНАННИКА</span>
@@ -75,17 +73,24 @@ export class GameUI {
           <kbd>1</kbd>
         </div>
         <button class="potion-slot" id="potion-button" aria-label="Использовать зелье"><span>♥</span><strong id="potion-count">2</strong><kbd>F</kbd></button>
+        <div class="ability-bar">
+          <button class="ability-slot dash ready" data-ui-ability="dash" aria-label="Рывок"><span>➤</span><small>РЫВОК</small><kbd>SHIFT</kbd><b id="dash-cooldown"></b></button>
+          <button class="ability-slot special ready" data-ui-ability="special" aria-label="Особая способность"><span>✦</span><small>ОСОБАЯ</small><kbd>R</kbd><b id="special-cooldown"></b></button>
+        </div>
 
         <div class="interaction-prompt" id="interaction-prompt"><kbd>E</kbd><span id="interaction-text">Говорить</span></div>
-        <div class="tutorial-tip" id="tutorial-tip"><span class="tutorial-step">ОБУЧЕНИЕ 1/3</span><strong>Начните путь</strong><p>Используйте WASD или левый стик, чтобы двигаться.</p></div>
+        <div class="tutorial-tip" id="tutorial-tip"><span class="tutorial-step">ОБУЧЕНИЕ 1/5</span><strong>Начните путь</strong><p>Используйте WASD или левый стик, чтобы двигаться.</p></div>
         <div class="toast" id="toast" role="status"></div>
         <div class="loot-banner" id="loot-banner" role="status"><span id="loot-icon">◆</span><div><small>ПОЛУЧЕНО</small><strong id="loot-name">Предмет</strong></div><b id="loot-quantity">+1</b></div>
         <div class="combo-banner" id="combo-banner"><strong id="combo-hits">2</strong><div><span>СЕРИЯ</span><b id="combo-multiplier">×1.03</b></div></div>
+        <div class="rift-banner" id="rift-banner"><span>✦</span><div><small>РАЗЛОМ ДОЛИНЫ</small><strong id="rift-name">Разлом</strong><p id="rift-progress">Волна 1 • осталось 3</p></div></div>
 
         <div class="mobile-controls" aria-label="Сенсорное управление">
           <div class="joystick" id="joystick"><span id="joystick-stick"></span></div>
           <div class="mobile-actions">
             <button class="mobile-button heal" data-mobile-action="heal" aria-label="Зелье">♥</button>
+            <button class="mobile-button dash" data-mobile-action="dash" aria-label="Рывок">➤</button>
+            <button class="mobile-button special" data-mobile-action="special" aria-label="Особая способность">✦</button>
             <button class="mobile-button interact" data-mobile-action="interact" aria-label="Взаимодействие">E</button>
             <button class="mobile-button attack" data-mobile-action="attack" aria-label="Атака">⚔</button>
           </div>
@@ -159,6 +164,8 @@ export class GameUI {
     this.on<string>('toast', (message) => this.showToast(message));
     this.on<{ itemId: string; quantity: number }>('loot', (loot) => this.showLoot(loot.itemId, loot.quantity));
     this.on<{ hits: number; multiplier: number }>('combo', ({ hits, multiplier }) => this.showCombo(hits, multiplier));
+    this.on<{ dash: number; special: number }>('ability-cooldown', ({ dash, special }) => this.showAbilityCooldown(dash, special));
+    this.on<{ name: string; wave: number; remaining: number } | null>('rift-status', (status) => this.showRiftStatus(status));
     this.on<string>('location', (location) => {
       const label = this.root.querySelector('#location-label');
       if (label) label.textContent = location.toUpperCase();
@@ -178,6 +185,7 @@ export class GameUI {
     });
     this.root.querySelectorAll<HTMLElement>('[data-close-panel]').forEach((button) => button.addEventListener('click', () => this.closePanel()));
     this.root.querySelector('#potion-button')?.addEventListener('click', () => GameEvents.emit('ui-heal'));
+    this.root.querySelectorAll<HTMLElement>('[data-ui-ability]').forEach((button) => button.addEventListener('click', () => GameEvents.emit(button.dataset.uiAbility === 'dash' ? 'ui-dash' : 'ui-special')));
     this.root.querySelector('#respawn-button')?.addEventListener('click', () => {
       this.root.querySelector('#death-screen')?.setAttribute('aria-hidden', 'true');
       GameEvents.emit('respawn');
@@ -193,6 +201,8 @@ export class GameUI {
         if (event === 'attack') GameEvents.emit('ui-attack');
         if (event === 'interact') GameEvents.emit('ui-interact');
         if (event === 'heal') GameEvents.emit('ui-heal');
+        if (event === 'dash') GameEvents.emit('ui-dash');
+        if (event === 'special') GameEvents.emit('ui-special');
       });
     });
     this.bindJoystick();
@@ -387,9 +397,22 @@ export class GameUI {
   }
 
   private mapHtml(): string {
-    const discovered = new Set(this.snapshot?.discoveredLocations ?? []);
-    const zone = (id: string, label: string) => `<div class="map-zone ${id} ${discovered.has(id) ? 'discovered' : 'undiscovered'}"><b>${discovered.has(id) ? label : '???'}</b></div>`;
-    return `<div class="world-map expanded">${zone('home','Дом')}${zone('village','Серый Холм')}${zone('cemetery','Кладбище')}${zone('forest','Шепчущий лес')}${zone('ruins','Руины')}${zone('marsh','Чёрное болото')}${zone('mines','Старые шахты')}${zone('docks','Пристань')}${zone('citadel','Пепельная цитадель')}<span class="map-road road-a"></span><span class="map-road road-b"></span><span class="map-road road-c"></span><span class="map-river"></span><span class="map-player" id="map-player"><i></i>ВЫ</span></div><div class="map-legend"><span><i class="safe"></i> Безопасная зона</span><span><i class="danger"></i> Опасная зона</span><span><b>◆</b> Кузница</span><span><b>▤</b> Интерьер</span><span><b>†</b> Задания</span></div>`;
+    return `<div class="world-map vector-map">${this.mapSvg(false)}<span class="map-player" id="map-player"><i></i>ВЫ</span></div><div class="map-legend"><span><i class="safe"></i> Безопасная зона</span><span><i class="danger"></i> Опасная зона</span><span><b>▤</b> Доступный интерьер</span><span><b>✦</b> Разлом Долины</span><span><b>†</b> Активная цель</span></div>`;
+  }
+
+  private mapSvg(mini: boolean): string {
+    const discovered = new Set(this.snapshot?.discoveredLocations ?? ['home', 'village']);
+    const river = `<polygon class="map-vector-river" points="${MAP_RIVER}"></polygon>`;
+    const roads = MAP_ROADS.map((road) => `<polyline class="map-vector-road" points="${road.map(([x,y]) => `${x},${y}`).join(' ')}"></polyline>`).join('');
+    const regions = MAP_SHAPES.map((shape) => {
+      const known = discovered.has(shape.id);
+      const classes = `map-zone map-region danger-${shape.danger} ${known ? 'discovered' : 'undiscovered'}`;
+      const label = mini ? '' : `<text x="${shape.labelX}" y="${shape.labelY}" class="map-label">${known ? shape.label : 'НЕИЗВЕДАННО'}</text>${known ? `<text x="${shape.labelX}" y="${shape.labelY + 78}" class="map-danger-label">${shape.danger ? `ОПАСНОСТЬ ${'◆'.repeat(shape.danger)}` : 'БЕЗОПАСНАЯ ЗОНА'}</text>` : ''}`;
+      return `<g><polygon class="${classes}" data-region="${shape.id}" points="${shape.points}"></polygon>${label}</g>`;
+    }).join('');
+    const interiors = mini ? '' : BUILDINGS.filter((building) => building.interior).map((building) => `<g class="map-poi"><rect x="${building.x - 28}" y="${building.y - 28}" width="56" height="56"></rect><text x="${building.x}" y="${building.y + 12}">▤</text></g>`).join('');
+    const rifts = RIFT_POINTS.map((rift) => `<g class="map-rift"><circle cx="${rift.x}" cy="${rift.y}" r="${mini ? 42 : 58}"></circle>${mini ? '' : `<text x="${rift.x}" y="${rift.y + 15}">✦</text>`}</g>`).join('');
+    return `<svg class="${mini ? 'minimap-svg' : 'world-map-svg'}" viewBox="0 0 ${WORLD_WIDTH} ${WORLD_HEIGHT}" preserveAspectRatio="none" aria-hidden="true"><rect class="map-vector-bg" width="${WORLD_WIDTH}" height="${WORLD_HEIGHT}"></rect>${river}${roads}${regions}${interiors}${rifts}</svg>`;
   }
 
   private pauseHtml(): string {
@@ -458,9 +481,29 @@ export class GameUI {
     const step = element.querySelector('.tutorial-step');
     const title = element.querySelector('strong');
     const text = element.querySelector('p');
-    if (step) step.textContent = `ОБУЧЕНИЕ ${tip.step}/3`;
+    if (step) step.textContent = `ОБУЧЕНИЕ ${tip.step}/5`;
     if (title) title.textContent = tip.title;
     if (text) text.textContent = tip.text;
+  }
+
+  private showRiftStatus(status: { name: string; wave: number; remaining: number } | null): void {
+    const banner = this.root.querySelector<HTMLElement>('#rift-banner');
+    if (!banner) return;
+    if (!status) { banner.classList.remove('visible'); return; }
+    this.text('#rift-name', status.name);
+    this.text('#rift-progress', `Волна ${status.wave}/3 • осталось ${status.remaining}`);
+    banner.classList.add('visible');
+  }
+
+  private showAbilityCooldown(dash: number, special: number): void {
+    const dashButton = this.root.querySelector<HTMLElement>('.ability-slot.dash');
+    const specialButton = this.root.querySelector<HTMLElement>('.ability-slot.special');
+    const mobileDash = this.root.querySelector<HTMLElement>('.mobile-button.dash');
+    const mobileSpecial = this.root.querySelector<HTMLElement>('.mobile-button.special');
+    this.text('#dash-cooldown', dash > 0 ? dash.toFixed(1) : '');
+    this.text('#special-cooldown', special > 0 ? special.toFixed(1) : '');
+    [dashButton, mobileDash].forEach((button) => button?.classList.toggle('ready', dash <= 0));
+    [specialButton, mobileSpecial].forEach((button) => button?.classList.toggle('ready', special <= 0));
   }
 
   private showCombo(hits: number, multiplier: number): void {

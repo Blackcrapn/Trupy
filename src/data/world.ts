@@ -39,16 +39,52 @@ export interface InteriorDefinition {
 }
 
 export const LOCATIONS: LocationDefinition[] = [
-  { id: 'home', name: 'Дом изгнанника', x: 260, y: 250, w: 560, h: 500, color: 0x353745, danger: 0, ambience: 'home' },
+  { id: 'home', name: 'Дом изгнанника', x: 260, y: 250, w: 400, h: 500, color: 0x353745, danger: 0, ambience: 'home' },
   { id: 'village', name: 'Деревня Серый Холм', x: 690, y: 300, w: 760, h: 680, color: 0x3d4039, danger: 0, ambience: 'village' },
   { id: 'cemetery', name: 'Старое кладбище', x: 1500, y: 230, w: 820, h: 720, color: 0x30353a, danger: 1, ambience: 'cemetery' },
-  { id: 'forest', name: 'Шепчущий лес', x: 650, y: 1050, w: 1450, h: 1050, color: 0x263b35, danger: 1, ambience: 'forest' },
-  { id: 'ruins', name: 'Проклятые руины', x: 2050, y: 1050, w: 850, h: 900, color: 0x342a40, danger: 2, ambience: 'ruins' },
-  { id: 'marsh', name: 'Чёрное болото', x: 2780, y: 180, w: 1050, h: 920, color: 0x263a38, danger: 2, ambience: 'marsh' },
-  { id: 'mines', name: 'Старые шахты', x: 3240, y: 1130, w: 760, h: 700, color: 0x3a352f, danger: 2, ambience: 'mine' },
+  { id: 'forest', name: 'Шепчущий лес', x: 650, y: 1050, w: 1400, h: 1050, color: 0x263b35, danger: 1, ambience: 'forest' },
+  { id: 'ruins', name: 'Проклятые руины', x: 2120, y: 1050, w: 770, h: 900, color: 0x342a40, danger: 2, ambience: 'ruins' },
+  { id: 'marsh', name: 'Чёрное болото', x: 2780, y: 180, w: 1050, h: 820, color: 0x263a38, danger: 2, ambience: 'marsh' },
+  { id: 'mines', name: 'Старые шахты', x: 3240, y: 1130, w: 620, h: 700, color: 0x3a352f, danger: 2, ambience: 'mine' },
   { id: 'docks', name: 'Пристань перевозчика', x: 2700, y: 2020, w: 1050, h: 700, color: 0x303b42, danger: 1, ambience: 'docks' },
-  { id: 'citadel', name: 'Пепельная цитадель', x: 3820, y: 1420, w: 700, h: 1280, color: 0x443138, danger: 3, ambience: 'citadel' },
+  { id: 'citadel', name: 'Пепельная цитадель', x: 3880, y: 1420, w: 620, h: 1280, color: 0x443138, danger: 3, ambience: 'citadel' },
 ];
+
+export interface MapShape {
+  id: string;
+  label: string;
+  points: string;
+  labelX: number;
+  labelY: number;
+  danger: number;
+}
+
+export const MAP_SHAPES: MapShape[] = [
+  { id: 'home', label: 'Дом', points: '260,250 620,250 660,310 650,700 280,750 240,520', labelX: 440, labelY: 485, danger: 0 },
+  { id: 'village', label: 'Серый Холм', points: '700,300 1400,300 1450,480 1420,930 760,980 680,730', labelX: 1060, labelY: 625, danger: 0 },
+  { id: 'cemetery', label: 'Кладбище', points: '1510,230 2250,230 2320,360 2300,900 1570,950 1500,760', labelX: 1900, labelY: 585, danger: 1 },
+  { id: 'forest', label: 'Шепчущий лес', points: '650,1050 2000,1050 2050,1230 1980,2000 850,2100 650,1870', labelX: 1340, labelY: 1570, danger: 1 },
+  { id: 'ruins', label: 'Проклятые руины', points: '2120,1050 2860,1050 2890,1200 2820,1900 2200,1950 2120,1720', labelX: 2490, labelY: 1495, danger: 2 },
+  { id: 'marsh', label: 'Чёрное болото', points: '2780,180 3780,180 3830,350 3780,950 2920,1000 2780,820', labelX: 3300, labelY: 590, danger: 2 },
+  { id: 'mines', label: 'Старые шахты', points: '3240,1130 3820,1130 3860,1290 3800,1800 3290,1830 3240,1550', labelX: 3545, labelY: 1480, danger: 2 },
+  { id: 'docks', label: 'Пристань', points: '2700,2020 3700,2020 3750,2200 3670,2680 2800,2720 2700,2500', labelX: 3210, labelY: 2380, danger: 1 },
+  { id: 'citadel', label: 'Пепельная цитадель', points: '3880,1420 4480,1420 4500,2650 3940,2700 3880,2480', labelX: 4190, labelY: 2080, danger: 3 },
+];
+
+export const MAP_ROADS: number[][][] = [
+  [[430,590],[980,650],[1770,680],[2400,1280],[3510,1470],[4160,1900]],
+  [[980,650],[1150,1190],[1500,1580],[2450,1500]],
+  [[2400,1280],[3200,650],[3480,650]],
+  [[2450,1500],[3160,2380],[4140,2230]],
+];
+
+export const MAP_RIVER = '2480,0 2740,0 2740,3000 2480,3000';
+
+export const RIFT_POINTS = [
+  { id: 'forest_rift', name: 'Лесной разлом', x: 1180, y: 1880, reward: 'moon_charm' },
+  { id: 'marsh_rift', name: 'Разлом Чёрной топи', x: 3540, y: 820, reward: 'bogreaper' },
+  { id: 'citadel_rift', name: 'Пепельный разлом', x: 4200, y: 2220, reward: 'ember_eye' },
+] as const;
 
 export const BUILDINGS: BuildingDefinition[] = [
   { id: 'player_home', name: 'ДОМ ИЗГНАННИКА', x: 430, y: 420, w: 240, h: 170, wall: 0x4c4651, roof: 0x342d3b, doorX: 0, interior: 'player_home' },

@@ -34,6 +34,9 @@ export class InteriorScene extends Phaser.Scene {
   private npc?: Phaser.GameObjects.Sprite;
   private prompt: 'exit' | 'chest' | 'npc' | undefined;
   private lastStepAt = 0;
+  private dashReadyAt = 0;
+  private specialReadyAt = 0;
+  private isDashing = false;
   private eventDisposers: Array<() => void> = [];
 
   constructor() { super('InteriorScene'); }
@@ -66,6 +69,7 @@ export class InteriorScene extends Phaser.Scene {
   update(time: number): void {
     this.updatePlayer(time);
     this.updatePrompt();
+    GameEvents.emit('ability-cooldown', { dash: Math.max(0, (this.dashReadyAt - time) / 1000), special: Math.max(0, (this.specialReadyAt - time) / 1000) });
     this.player.setDepth(this.player.y / 10 + 20);
   }
 
@@ -159,9 +163,9 @@ export class InteriorScene extends Phaser.Scene {
   }
 
   private createPlayer(): void {
-    this.player = this.physics.add.sprite(this.definition.width / 2, this.definition.height - 145, 'hero-up-0').setScale(2.05).setCollideWorldBounds(true);
+    this.player = this.physics.add.sprite(this.definition.width / 2, this.definition.height - 145, 'hero-up-0').setScale(1.65).setCollideWorldBounds(true);
     const body = this.player.body as Phaser.Physics.Arcade.Body;
-    body.setSize(13, 11).setOffset(5.5, 17);
+    body.setSize(16, 12).setOffset(8, 26);
   }
 
   private createResident(): void {
@@ -169,7 +173,7 @@ export class InteriorScene extends Phaser.Scene {
     const npcId = residentByRoom[this.definition.id];
     if (!npcId) return;
     const index = NPCS.findIndex((entry) => entry.id === npcId);
-    this.npc = this.add.sprite(this.definition.width / 2 + 190, 190, `npc-${Math.max(0, index)}`).setScale(2.05).setDepth(30);
+    this.npc = this.add.sprite(this.definition.width / 2 + 190, 190, `npc-${Math.max(0, index)}`).setScale(1.72).setDepth(30);
     const npc = NPCS[index];
     this.add.text(this.npc.x, this.npc.y - 46, npc.name, { fontFamily: 'monospace', fontSize: '10px', color: '#e7e0e8', stroke: '#11131a', strokeThickness: 4 }).setOrigin(.5).setDepth(32);
   }
@@ -177,7 +181,7 @@ export class InteriorScene extends Phaser.Scene {
   private setupInput(): void {
     if (!this.input.keyboard) return;
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.keys = this.input.keyboard.addKeys('W,A,S,D,E,F,I,ESC,SPACE') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard.addKeys('W,A,S,D,E,F,I,R,SHIFT,ESC,SPACE') as Record<string, Phaser.Input.Keyboard.Key>;
   }
 
   private setupUi(): void {
@@ -190,6 +194,8 @@ export class InteriorScene extends Phaser.Scene {
     this.listen<{ x: number; y: number }>('ui-move', (vector) => this.mobileMove.set(vector.x, vector.y));
     this.listen<void>('ui-interact', () => { if (!this.uiLocked) this.interact(); });
     this.listen<void>('ui-attack', () => this.interiorAttack());
+    this.listen<void>('ui-dash', () => this.dash());
+    this.listen<void>('ui-special', () => this.interiorSpecial());
     this.listen<void>('ui-heal', () => this.useItem('blood_vial'));
     this.listen<string>('equip', (id) => { this.inventory.equip(id); audio.ui(); this.emitHud(); });
     this.listen<string>('equip-item', (id) => { this.inventory.equip(id); audio.ui(); this.emitHud(); });
@@ -208,6 +214,7 @@ export class InteriorScene extends Phaser.Scene {
 
   private updatePlayer(time: number): void {
     if (this.uiLocked) { this.player.setVelocity(0); this.player.anims.stop(); return; }
+    if (this.isDashing) return;
     const input = new Phaser.Math.Vector2(
       (this.keys.D.isDown || this.cursors.right.isDown ? 1 : 0) - (this.keys.A.isDown || this.cursors.left.isDown ? 1 : 0),
       (this.keys.S.isDown || this.cursors.down.isDown ? 1 : 0) - (this.keys.W.isDown || this.cursors.up.isDown ? 1 : 0),
@@ -231,6 +238,8 @@ export class InteriorScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.keys.I)) GameEvents.emit('panel-open', 'inventory');
     if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) GameEvents.emit('panel-open', 'pause');
     if (Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.interiorAttack();
+    if (Phaser.Input.Keyboard.JustDown(this.keys.SHIFT)) this.dash();
+    if (Phaser.Input.Keyboard.JustDown(this.keys.R)) this.interiorSpecial();
   }
 
   private updatePrompt(): void {
@@ -277,6 +286,24 @@ export class InteriorScene extends Phaser.Scene {
       gran: 'Под часовней есть склеп. Пока печати держатся, мёртвые остаются внизу.',
     };
     GameEvents.emit('dialogue', { speaker: npc.name, subtitle: npc.role.toUpperCase(), text: text[npcId] ?? 'Добро пожаловать.', accent: `#${npc.accent.toString(16).padStart(6, '0')}`, actions: [{ label: npcId === 'runa' ? 'Открыть магазин' : 'Продолжить', event: npcId === 'runa' ? 'open-shop' : 'close', primary: true }, { label: 'Уйти', event: 'close' }] });
+  }
+
+  private dash(): void {
+    if (this.uiLocked || this.isDashing || this.time.now < this.dashReadyAt) return;
+    const direction = this.mobileMove.lengthSq() > .05 ? this.mobileMove.clone().normalize() : this.facing.clone().normalize();
+    this.dashReadyAt = this.time.now + 1800;
+    this.isDashing = true;
+    this.player.setVelocity(direction.x * 520, direction.y * 520).setAlpha(.7);
+    audio.attack('ranged');
+    this.time.delayedCall(170, () => { this.isDashing = false; this.player.setAlpha(1).setVelocity(0); });
+  }
+
+  private interiorSpecial(): void {
+    if (this.uiLocked || this.time.now < this.specialReadyAt) return;
+    this.specialReadyAt = this.time.now + 4500;
+    audio.attack('magic');
+    const ring = this.add.circle(this.player.x, this.player.y, 26, 0xb46dcc, .4).setStrokeStyle(5, 0xf0ccff, .9).setDepth(90);
+    this.tweens.add({ targets: ring, radius: 150, alpha: 0, duration: 520, onComplete: () => ring.destroy() });
   }
 
   private interiorAttack(): void {

@@ -348,6 +348,13 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
 .combo-banner div { display:grid; gap:2px; }
 .combo-banner span { color:#878995; font-size:7px; letter-spacing:.16em; }
 .combo-banner b { color:#e8dbe2; font-size:9px; }
+.rift-banner { position:absolute; left:50%; top:calc(205px + var(--safe-top)); min-width:310px; transform:translate(-50%,-12px); padding:10px 14px; display:flex; align-items:center; gap:12px; background:linear-gradient(110deg,rgba(34,19,42,.96),rgba(14,16,24,.95)); border:2px solid #a562ba; box-shadow:5px 5px #0008,0 0 24px #a34db744; opacity:0; transition:opacity .2s,transform .2s; }
+.rift-banner.visible { opacity:1; transform:translate(-50%,0); }
+.rift-banner > span { color:#e1a1f2; font-size:30px; text-shadow:0 0 14px #c859e4; }
+.rift-banner div { display:grid; gap:3px; }
+.rift-banner small { color:#a17ba9; font-size:7px; letter-spacing:.17em; }
+.rift-banner strong { font:11px 'Russo One'; }
+.rift-banner p { margin:0; color:#c6bdcb; font-size:8px; }
 
 .inventory-layout { display:grid; grid-template-columns:230px minmax(0,1fr); gap:18px; min-height:100%; }
 .equipment-paperdoll { position:sticky; top:0; align-self:start; padding:17px; background:linear-gradient(160deg,#1d1b29,#12141d); border:2px solid #454858; box-shadow:inset 0 0 35px #0004; }
@@ -404,6 +411,25 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
 .world-map.expanded .map-zone.citadel { left:84%; top:47%; width:14%; height:44%; background:#613d46; border-color:#9b5d68; }
 .map-zone.undiscovered { filter:grayscale(1) brightness(.45); border-style:dashed; }
 .map-road.road-c { left:59%; top:63%; width:39%; transform:rotate(-8deg); }
+.vector-map { background:#11181a; }
+.minimap-svg,.world-map-svg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
+.map-vector-bg { fill:#101718; }
+.map-vector-river { fill:#244552; stroke:#4e7080; stroke-width:18; }
+.map-vector-road { fill:none; stroke:#81735c; stroke-width:62; stroke-linecap:round; stroke-linejoin:round; opacity:.82; }
+.minimap-svg .map-vector-road { stroke-width:82; }
+.map-region { position:static; display:block; fill:#43483f; stroke:#72776d; stroke-width:18; transition:filter .2s,fill .2s; }
+.map-region.danger-0 { fill:#555a4d; stroke:#7d8371; }
+.map-region.danger-1 { fill:#36534a; stroke:#628071; }
+.map-region.danger-2 { fill:#514358; stroke:#7b6582; }
+.map-region.danger-3 { fill:#653d45; stroke:#a05b66; }
+.map-region.undiscovered { fill:#1b1d20; stroke:#444750; stroke-dasharray:42 26; filter:none; }
+.map-label { fill:#eee8ef; text-anchor:middle; font:700 72px 'Roboto Mono',monospace; paint-order:stroke; stroke:#11131a; stroke-width:20; letter-spacing:3px; }
+.map-danger-label { fill:#b7aeb9; text-anchor:middle; font:600 38px 'Roboto Mono',monospace; letter-spacing:5px; }
+.map-poi rect { fill:#11131a; stroke:#d2aa65; stroke-width:10; }
+.map-poi text { fill:#f0c777; text-anchor:middle; font:700 44px 'Roboto Mono'; }
+.map-rift circle { fill:#5d326c; stroke:#d78bea; stroke-width:16; filter:drop-shadow(0 0 24px #b757cf); }
+.map-rift text { fill:#f0c2ff; text-anchor:middle; font:700 52px 'Roboto Mono'; }
+.minimap-svg .map-label,.minimap-svg .map-danger-label,.minimap-svg .map-poi { display:none; }
 
 .quality-low .hud-card, .quality-low .panel-backdrop { backdrop-filter:none; }
 
@@ -427,4 +453,33 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
   .inventory-item { grid-template-columns:45px minmax(0,1fr); }
   .item-icon { width:45px; height:45px; }
   .pause-layout.v2 { grid-template-columns:1fr; }
+}
+
+/* Version 3: abilities and corrected cartography */
+.ability-bar { position:absolute; left:calc(316px + var(--safe-left)); bottom:calc(18px + var(--safe-bottom)); display:flex; gap:7px; }
+.ability-slot { position:relative; width:70px; height:58px; padding:5px; display:grid; grid-template-columns:28px 1fr; align-items:center; background:#141620; border:2px solid #484b5a !important; box-shadow:4px 4px #0009; color:#767984; overflow:hidden; }
+.ability-slot::after { content:''; position:absolute; inset:0; background:linear-gradient(135deg,transparent,#0008); pointer-events:none; }
+.ability-slot.ready { color:#e8d9ec; border-color:#8d658f !important; box-shadow:4px 4px #0009,0 0 14px #8d4fa033; }
+.ability-slot > span { z-index:1; color:#a477b2; font-size:22px; }
+.ability-slot.ready > span { color:#e4a9ee; text-shadow:0 0 10px #b55bcf; }
+.ability-slot small { z-index:1; font-size:7px; letter-spacing:.08em; }
+.ability-slot kbd { position:absolute; left:4px; top:3px; z-index:2; font-size:6px; }
+.ability-slot b { position:absolute; inset:0; z-index:2; display:grid; place-items:center; color:#eee8f0; background:#11131bbb; font:14px 'Russo One'; }
+.ability-slot b:empty { display:none; }
+
+@media (max-width:850px), (pointer:coarse) {
+  .ability-bar { display:none; }
+  .rift-banner { top:auto; bottom:calc(215px + var(--safe-bottom)); min-width:230px; padding:7px 10px; }
+  .mobile-actions { width:190px; height:156px; }
+  .mobile-button.attack { right:0; bottom:0; }
+  .mobile-button.interact { left:66px; top:16px; }
+  .mobile-button.heal { left:42px; bottom:0; }
+  .mobile-button.dash { left:0; top:32px; width:48px; height:48px; color:#9fd8ef; transform:rotate(-10deg); }
+  .mobile-button.special { right:8px; top:0; width:50px; height:50px; color:#e1a4f0; }
+  .mobile-button.dash:not(.ready),.mobile-button.special:not(.ready) { filter:grayscale(1) brightness(.55); }
+}
+
+@media (max-width:520px) {
+  .mobile-actions { right:calc(12px + var(--safe-right)); }
+  .mobile-button.interact { left:70px; }
 }

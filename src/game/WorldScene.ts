@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { BATTLE_PASS, ENEMIES, NPCS, QUESTS, WEAPONS, XP_FOR_LEVEL } from '../data/content';
 import { getItem } from '../data/items';
-import { BUILDINGS, LOCATIONS, WORLD_HEIGHT, WORLD_WIDTH, getBuildingDoor } from '../data/world';
+import { BUILDINGS, LOCATIONS, MAP_SHAPES, RIFT_POINTS, WORLD_HEIGHT, WORLD_WIDTH, getBuildingDoor } from '../data/world';
 import { GameUI } from '../ui/GameUI';
 import { AudioManager, audio } from '../systems/AudioManager';
 import { InventorySystem } from '../systems/InventorySystem';
@@ -12,7 +12,7 @@ import { GameEvents } from './events';
 
 const PLAYER_START = { x: 430, y: 585 };
 
-type InteractiveKind = 'npc' | 'collect' | 'lantern' | 'altar' | 'door' | 'chest' | 'shrine' | 'lift';
+type InteractiveKind = 'npc' | 'collect' | 'lantern' | 'altar' | 'door' | 'chest' | 'shrine' | 'lift' | 'rift';
 
 interface InteractiveEntity {
   kind: InteractiveKind;
@@ -28,6 +28,18 @@ interface EnemySpawn {
   type: keyof typeof ENEMIES;
   x: number;
   y: number;
+  temporary?: boolean;
+  riftId?: string;
+}
+
+interface RiftState {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  reward: string;
+  wave: number;
+  remaining: number;
 }
 
 export class WorldScene extends Phaser.Scene {
@@ -53,15 +65,20 @@ export class WorldScene extends Phaser.Scene {
   private nearest?: InteractiveEntity;
   private lastLocation = '';
   private objectiveMarker?: Phaser.GameObjects.Container;
+  private regionTint?: Phaser.GameObjects.Rectangle;
   private lastHudSignature = '';
   private eventDisposers: Array<() => void> = [];
   private boss?: Phaser.Physics.Arcade.Sprite;
   private cinderBoss?: Phaser.Physics.Arcade.Sprite;
+  private activeRift?: RiftState;
   private playtimeAccumulator = 0;
   private lastStepAt = 0;
   private currentCombat = false;
   private comboHits = 0;
   private comboExpires = 0;
+  private dashReadyAt = 0;
+  private specialReadyAt = 0;
+  private isDashing = false;
   private lastSlowTickAt = 0;
   private requestedSpawn?: { x: number; y: number };
 
@@ -74,6 +91,16 @@ export class WorldScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.interactables = [];
+    this.npcMarkers.clear();
+    this.nearest = undefined;
+    this.objectiveMarker = undefined;
+    this.regionTint = undefined;
+    this.boss = undefined;
+    this.cinderBoss = undefined;
+    this.activeRift = undefined;
+    this.lastLocation = '';
+    this.lastHudSignature = '';
     this.saves = new SaveSystem();
     this.quests = new QuestSystem(this.saves);
     this.inventory = new InventorySystem(this.saves);
@@ -130,6 +157,7 @@ export class WorldScene extends Phaser.Scene {
       this.updateObjectiveMarker();
       this.updateEnemyBars();
       this.syncBoss();
+      GameEvents.emit('ability-cooldown', { dash: Math.max(0, (this.dashReadyAt - time) / 1000), special: Math.max(0, (this.specialReadyAt - time) / 1000) });
       this.ui.updateWorldPosition(this.player.x, this.player.y);
       this.lastSlowTickAt = time;
     }
@@ -150,9 +178,13 @@ export class WorldScene extends Phaser.Scene {
     }
 
     for (const location of LOCATIONS) {
-      ground.fillStyle(location.color, 1).fillRoundedRect(location.x, location.y, location.w, location.h, 28);
-      ground.lineStyle(location.danger >= 2 ? 5 : 3, Phaser.Display.Color.IntegerToColor(location.color).brighten(18).color, 0.5)
-        .strokeRoundedRect(location.x, location.y, location.w, location.h, 28);
+      const shape = MAP_SHAPES.find((entry) => entry.id === location.id);
+      const points = shape?.points.split(' ').map((pair) => { const [x, y] = pair.split(',').map(Number); return new Phaser.Geom.Point(x, y); }) ?? [
+        new Phaser.Geom.Point(location.x, location.y), new Phaser.Geom.Point(location.x + location.w, location.y),
+        new Phaser.Geom.Point(location.x + location.w, location.y + location.h), new Phaser.Geom.Point(location.x, location.y + location.h),
+      ];
+      ground.fillStyle(location.color, 1).fillPoints(points, true);
+      ground.lineStyle(location.danger >= 2 ? 6 : 4, Phaser.Display.Color.IntegerToColor(location.color).brighten(18).color, .55).strokePoints(points, true);
     }
 
     const road = (points: Array<[number, number]>, width = 74, color = 0x574f43) => {
@@ -185,7 +217,8 @@ export class WorldScene extends Phaser.Scene {
     this.scatterDecorations();
 
     LOCATIONS.forEach((location) => {
-      this.add.text(location.x + location.w / 2, location.y + 30, location.name.toUpperCase(), {
+      const shape = MAP_SHAPES.find((entry) => entry.id === location.id);
+      this.add.text(shape?.labelX ?? location.x + location.w / 2, (shape?.labelY ?? location.y) - Math.min(250, location.h * .28), location.name.toUpperCase(), {
         fontFamily: 'monospace', fontSize: location.id === 'citadel' ? '20px' : '18px', fontStyle: 'bold', color: '#d3cdd6',
         stroke: '#11131a', strokeThickness: 6, letterSpacing: 4,
       }).setOrigin(0.5).setAlpha(location.danger >= 2 ? .34 : .24).setDepth(2);
@@ -371,16 +404,16 @@ export class WorldScene extends Phaser.Scene {
 
   private createPlayer(): void {
     const saved = this.requestedSpawn ?? this.saves.get().playerPosition ?? PLAYER_START;
-    this.player = this.physics.add.sprite(saved.x, saved.y, 'hero-down-0').setScale(2.05);
+    this.player = this.physics.add.sprite(saved.x, saved.y, 'hero-down-0').setScale(1.65);
     this.player.setCollideWorldBounds(true);
     this.player.setDrag(900, 900);
     const body = this.player.body as Phaser.Physics.Arcade.Body;
-    body.setSize(13, 11).setOffset(5.5, 17);
+    body.setSize(16, 12).setOffset(8, 26);
   }
 
   private createNpcs(): void {
     NPCS.forEach((npc, index) => {
-      const sprite = this.add.sprite(npc.x, npc.y, `npc-${index}`).setScale(2.05).setDepth(npc.y / 10 + 10);
+      const sprite = this.add.sprite(npc.x, npc.y, `npc-${index}`).setScale(1.72).setDepth(npc.y / 10 + 10);
       sprite.setData('npcId', npc.id);
       const name = this.add.text(npc.x, npc.y - 48, npc.name, {
         fontFamily: 'monospace', fontSize: '10px', color: '#ded9e2', stroke: '#11131a', strokeThickness: 4,
@@ -438,7 +471,74 @@ export class WorldScene extends Phaser.Scene {
       const image = this.add.image(x, y, 'altar').setScale(2.2).setTint(used ? 0x666570 : 0x9e76c2).setDepth(y / 10 + 6);
       this.interactables.push({ kind: 'shrine', id: String(index), uniqueId, label: used ? 'Святилище молчит' : 'Коснуться святилища', object: image });
     });
+    RIFT_POINTS.forEach((rift, index) => {
+      const complete = Boolean(this.saves.get().flags[`rift-complete:${rift.id}`]);
+      const image = this.add.image(rift.x, rift.y, 'rift-core').setScale(2.2).setTint(complete ? 0x555866 : 0xbd6ed8).setAlpha(complete ? .55 : 1).setDepth(rift.y / 10 + 8);
+      if (!complete) this.tweens.add({ targets: image, scale: { from: 1.9, to: 2.45 }, angle: 180, alpha: { from: .62, to: 1 }, duration: 1300 + index * 170, yoyo: true, repeat: -1 });
+      this.interactables.push({ kind: 'rift', id: rift.id, uniqueId: `rift:${rift.id}`, label: complete ? 'Разлом очищен' : `Активировать: ${rift.name}`, object: image, target: rift.reward });
+    });
     this.syncInteractables();
+  }
+
+  private startRift(riftId: string): void {
+    const definition = RIFT_POINTS.find((rift) => rift.id === riftId);
+    if (!definition) return;
+    this.activeRift = { ...definition, wave: 0, remaining: 0 };
+    this.sfx.quest();
+    this.cameras.main.flash(260, 130, 55, 165);
+    this.cameras.main.shake(420, .008);
+    GameEvents.emit('toast', `${definition.name} пробуждается`);
+    this.time.delayedCall(500, () => this.spawnRiftWave());
+  }
+
+  private spawnRiftWave(): void {
+    const rift = this.activeRift;
+    if (!rift) return;
+    rift.wave += 1;
+    if (rift.wave > 3) { this.completeRift(); return; }
+    const pools: Record<string, Array<keyof typeof ENEMIES>> = {
+      forest_rift: ['direwolf', 'wraith', 'husk'],
+      marsh_rift: ['bogling', 'wraith', 'direwolf'],
+      citadel_rift: ['ashborn', 'boneguard', 'wraith'],
+    };
+    const pool = pools[rift.id] ?? ['husk'];
+    const count = 2 + rift.wave;
+    rift.remaining = count;
+    for (let index = 0; index < count; index += 1) {
+      const angle = index / count * Math.PI * 2;
+      const radius = 105 + rift.wave * 28;
+      const type = pool[(index + rift.wave - 1) % pool.length];
+      const enemy = this.spawnEnemy({ type, x: rift.x + Math.cos(angle) * radius, y: rift.y + Math.sin(angle) * radius, temporary: true, riftId: rift.id });
+      enemy.setAlpha(0).setScale(enemy.scaleX * .35, enemy.scaleY * .35);
+      this.tweens.add({ targets: enemy, alpha: 1, scaleX: enemy.scaleX / .35, scaleY: enemy.scaleY / .35, duration: 420 });
+    }
+    GameEvents.emit('rift-status', { name: rift.name, wave: rift.wave, remaining: rift.remaining });
+    GameEvents.emit('toast', `Волна ${rift.wave}/3 • противников: ${count}`);
+  }
+
+  private onRiftEnemyKilled(riftId: string): void {
+    const rift = this.activeRift;
+    if (!rift || rift.id !== riftId) return;
+    rift.remaining = Math.max(0, rift.remaining - 1);
+    GameEvents.emit('rift-status', { name: rift.name, wave: rift.wave, remaining: rift.remaining });
+    if (rift.remaining === 0) this.time.delayedCall(900, () => this.spawnRiftWave());
+  }
+
+  private completeRift(): void {
+    const rift = this.activeRift;
+    if (!rift) return;
+    this.saves.mutate((save) => { save.flags[`rift-complete:${rift.id}`] = true; save.coins += 280; save.xp += 160; }, true);
+    this.inventory.add(rift.reward, 1, true);
+    const item = getItem(rift.reward);
+    if (item) GameEvents.emit('loot', { itemId: item.id, quantity: 1 });
+    GameEvents.emit('toast', `${rift.name} очищен • +280 золота • редкая награда`);
+    GameEvents.emit('rift-status', null);
+    this.sfx.quest();
+    const wave = this.add.circle(rift.x, rift.y, 45, 0xc56bde, .55).setStrokeStyle(8, 0xf0b8ff, .9).setDepth(900);
+    this.tweens.add({ targets: wave, radius: 260, alpha: 0, duration: 1100, onComplete: () => wave.destroy() });
+    this.interactables.find((entity) => entity.kind === 'rift' && entity.id === rift.id)?.object.setTint(0x555866).setAlpha(.55);
+    this.activeRift = undefined;
+    this.emitHud(true);
   }
 
   private createEnemies(): void {
@@ -457,7 +557,7 @@ export class WorldScene extends Phaser.Scene {
 
   private spawnEnemy(spawn: EnemySpawn): Phaser.Physics.Arcade.Sprite {
     const definition = ENEMIES[spawn.type];
-    const enemy = this.physics.add.sprite(spawn.x, spawn.y, `enemy-${spawn.type}`).setScale((definition.scale ?? 1) * 2.05);
+    const enemy = this.physics.add.sprite(spawn.x, spawn.y, `enemy-${spawn.type}`).setScale((definition.scale ?? 1) * 1.62);
     enemy.setDepth(enemy.y / 10 + 12);
     enemy.setDataEnabled();
     enemy.setData({
@@ -472,6 +572,7 @@ export class WorldScene extends Phaser.Scene {
       homeX: spawn.x,
       homeY: spawn.y,
       lastAttack: 0,
+      lastSpecial: 0,
       spawn,
     });
     const body = enemy.body as Phaser.Physics.Arcade.Body;
@@ -494,6 +595,7 @@ export class WorldScene extends Phaser.Scene {
     overlay.fillStyle(0x17132b, .1).fillRect(0, 0, width, height);
     overlay.fillStyle(0x05070d, .22).fillRect(0, 0, width, 55);
     overlay.fillStyle(0x05070d, .18).fillRect(0, height - 70, width, 70);
+    this.regionTint = this.add.rectangle(0, 0, width, height, 0x332342, .06).setOrigin(0).setScrollFactor(0).setDepth(899).setBlendMode(Phaser.BlendModes.ADD);
     const low = this.saves.get().settings.quality === 'low' || (this.saves.get().settings.quality === 'auto' && this.scale.width < 700);
     const moteCount = low ? 28 : 86;
     for (let index = 0; index < moteCount; index += 1) {
@@ -539,7 +641,7 @@ export class WorldScene extends Phaser.Scene {
   private setupInput(): void {
     if (!this.input.keyboard) return;
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.keys = this.input.keyboard.addKeys('W,A,S,D,E,F,Q,I,M,B,ESC,SPACE,ONE,TWO,THREE,FOUR,FIVE,SIX,SEVEN,EIGHT') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard.addKeys('W,A,S,D,E,F,Q,I,M,B,R,SHIFT,ESC,SPACE,ONE,TWO,THREE,FOUR,FIVE,SIX,SEVEN,EIGHT') as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       if (!this.uiLocked && pointer.leftButtonDown()) this.attack(pointer);
     });
@@ -562,6 +664,8 @@ export class WorldScene extends Phaser.Scene {
     });
     this.listen<{ x: number; y: number }>('ui-move', (vector) => this.mobileMove.set(vector.x, vector.y));
     this.listen<void>('ui-attack', () => { if (!this.uiLocked) this.attack(); });
+    this.listen<void>('ui-dash', () => { if (!this.uiLocked) this.dash(); });
+    this.listen<void>('ui-special', () => { if (!this.uiLocked) this.specialAbility(); });
     this.listen<void>('ui-interact', () => { if (!this.uiLocked) this.interact(); });
     this.listen<void>('ui-heal', () => this.usePotion());
     this.listen<string>('equip', (weaponId) => this.equipWeapon(weaponId));
@@ -611,6 +715,7 @@ export class WorldScene extends Phaser.Scene {
       this.player.anims.stop();
       return;
     }
+    if (this.isDashing) return;
     const input = new Phaser.Math.Vector2(
       (this.keys?.D?.isDown || this.cursors?.right?.isDown ? 1 : 0) - (this.keys?.A?.isDown || this.cursors?.left?.isDown ? 1 : 0),
       (this.keys?.S?.isDown || this.cursors?.down?.isDown ? 1 : 0) - (this.keys?.W?.isDown || this.cursors?.up?.isDown ? 1 : 0),
@@ -650,6 +755,8 @@ export class WorldScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.keys.E)) this.interact();
     if (Phaser.Input.Keyboard.JustDown(this.keys.F)) this.usePotion();
     if (Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.attack();
+    if (Phaser.Input.Keyboard.JustDown(this.keys.SHIFT)) this.dash();
+    if (Phaser.Input.Keyboard.JustDown(this.keys.R)) this.specialAbility();
     if (Phaser.Input.Keyboard.JustDown(this.keys.Q)) GameEvents.emit('panel-open', 'journal');
     if (Phaser.Input.Keyboard.JustDown(this.keys.I)) GameEvents.emit('panel-open', 'inventory');
     if (Phaser.Input.Keyboard.JustDown(this.keys.M)) GameEvents.emit('panel-open', 'map');
@@ -662,6 +769,69 @@ export class WorldScene extends Phaser.Scene {
         if (weapon) this.equipWeapon(weapon);
       }
     });
+  }
+
+  private dash(): void {
+    if (this.time.now < this.dashReadyAt || this.uiLocked || this.isDashing) return;
+    const direction = this.mobileMove.lengthSq() > .05 ? this.mobileMove.clone().normalize() : this.facing.clone().normalize();
+    if (direction.lengthSq() < .01) direction.set(0, 1);
+    this.dashReadyAt = this.time.now + 1800;
+    this.isDashing = true;
+    this.hurtReadyAt = this.time.now + 420;
+    this.sfx.attack('ranged');
+    if (!this.saves.get().tutorialDone && this.saves.get().flags.tutorialMoved && this.saves.get().flags.tutorialAttacked && !this.saves.get().flags.tutorialDashed) {
+      this.saves.mutate((save) => { save.flags.tutorialDashed = true; }, true);
+      this.emitTutorial();
+      GameEvents.emit('toast', 'Рывок освоен');
+    }
+    this.player.setVelocity(direction.x * 620, direction.y * 620).setAlpha(.7);
+    for (let index = 0; index < 5; index += 1) {
+      this.time.delayedCall(index * 32, () => {
+        const ghost = this.add.image(this.player.x, this.player.y, this.player.texture.key).setScale(this.player.scaleX, this.player.scaleY).setFlipX(this.player.flipX).setTint(0xb98bd1).setAlpha(.34).setDepth(this.player.depth - 1);
+        this.tweens.add({ targets: ghost, alpha: 0, scaleX: ghost.scaleX * 1.08, scaleY: ghost.scaleY * 1.08, duration: 260, onComplete: () => ghost.destroy() });
+      });
+    }
+    this.cameras.main.shake(110, .003);
+    this.time.delayedCall(190, () => { this.isDashing = false; this.player.setAlpha(1).setVelocity(direction.x * 90, direction.y * 90); });
+  }
+
+  private specialAbility(): void {
+    if (this.time.now < this.specialReadyAt || this.uiLocked) return;
+    const weapon = WEAPONS.find((item) => item.id === this.saves.get().equippedWeapon) ?? WEAPONS[0];
+    this.specialReadyAt = this.time.now + (weapon.kind === 'melee' ? 4800 : weapon.kind === 'ranged' ? 5200 : 6200);
+    this.sfx.attack(weapon.kind === 'magic' ? 'magic' : weapon.kind);
+    if (!this.saves.get().tutorialDone && this.saves.get().flags.tutorialDashed && !this.saves.get().flags.tutorialSpecial) {
+      this.saves.mutate((save) => { save.flags.tutorialSpecial = true; }, true);
+      this.emitTutorial();
+      GameEvents.emit('toast', 'Особая способность освоена');
+    }
+    if (weapon.kind === 'melee') {
+      const ring = this.add.circle(this.player.x, this.player.y, 38, 0xb35a78, .22).setStrokeStyle(6, 0xf0a8c0, .9).setDepth(this.player.depth + 3);
+      this.tweens.add({ targets: ring, radius: 150, alpha: 0, angle: 180, duration: 420, onComplete: () => ring.destroy() });
+      this.enemies.children.each((child) => {
+        const enemy = child as Phaser.Physics.Arcade.Sprite;
+        if (enemy.active && Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y) < 165) this.damageEnemy(enemy, Math.round((weapon.damage + this.inventory.damageBonus()) * 1.7));
+        return null;
+      });
+    } else if (weapon.kind === 'ranged') {
+      const baseAngle = this.facing.angle();
+      [-.34, -.17, 0, .17, .34].forEach((offset) => this.projectileAttack(weapon, new Phaser.Math.Vector2(Math.cos(baseAngle + offset), Math.sin(baseAngle + offset))));
+    } else {
+      const nova = this.add.circle(this.player.x, this.player.y, 28, Phaser.Display.Color.HexStringToColor(weapon.accent).color, .42).setStrokeStyle(5, 0xf4d7ff, .9).setDepth(this.player.depth + 3);
+      this.tweens.add({ targets: nova, radius: 230, alpha: 0, duration: 650, onComplete: () => nova.destroy() });
+      this.enemies.children.each((child) => {
+        const enemy = child as Phaser.Physics.Arcade.Sprite;
+        const distance = Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y);
+        if (enemy.active && distance < 240) {
+          this.damageEnemy(enemy, Math.round((weapon.damage + this.inventory.damageBonus()) * 1.35));
+          const push = new Phaser.Math.Vector2(enemy.x - this.player.x, enemy.y - this.player.y).normalize();
+          enemy.setVelocity(push.x * 280, push.y * 280);
+        }
+        return null;
+      });
+    }
+    this.cameras.main.flash(90, 180, 105, 170);
+    this.cameras.main.shake(180, .006);
   }
 
   private attack(pointer?: Phaser.Input.Pointer): void {
@@ -760,9 +930,10 @@ export class WorldScene extends Phaser.Scene {
     this.sfx.coin();
     GameEvents.emit('toast', `+${coins} золота • ${definition.name} повержен`);
     if (update.readyQuest) this.sfx.quest();
-    if (type !== 'nameless' && type !== 'cinderlord') this.time.delayedCall(11000, () => this.spawnEnemy(spawn));
+    if (spawn.riftId) this.onRiftEnemyKilled(spawn.riftId);
+    else if (!spawn.temporary && type !== 'nameless' && type !== 'cinderlord') this.time.delayedCall(11000, () => this.spawnEnemy(spawn));
     else if (type === 'nameless') this.boss = undefined;
-    else this.cinderBoss = undefined;
+    else if (type === 'cinderlord') this.cinderBoss = undefined;
     this.onQuestProgress(update);
     this.emitHud(true);
   }
@@ -795,6 +966,7 @@ export class WorldScene extends Phaser.Scene {
         combat = true;
         this.physics.moveToObject(enemy, this.player, speed);
         enemy.setFlipX(body.velocity.x < 0);
+        this.tryEnemySpecial(enemy, time, distance);
         if (distance < 42 + enemy.displayWidth * .18 && time > Number(enemy.getData('lastAttack')) + 850) {
           enemy.setData('lastAttack', time);
           this.hurtPlayer(Number(enemy.getData('damage')));
@@ -813,6 +985,58 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
+  private tryEnemySpecial(enemy: Phaser.Physics.Arcade.Sprite, time: number, distance: number): void {
+    const type = enemy.getData('type') as keyof typeof ENEMIES;
+    const last = Number(enemy.getData('lastSpecial'));
+    const boss = type === 'nameless' || type === 'cinderlord';
+    const cooldown = boss ? 3600 : type === 'ashborn' ? 3000 : 2600;
+    if (time < last + cooldown) return;
+    const damage = Number(enemy.getData('damage'));
+    if ((type === 'direwolf' || type === 'cavecrawler') && distance > 80 && distance < 280) {
+      enemy.setData('lastSpecial', time);
+      const line = this.add.line(0, 0, enemy.x, enemy.y, this.player.x, this.player.y, 0xe39a66, .75).setOrigin(0).setLineWidth(5).setDepth(890);
+      this.tweens.add({ targets: line, alpha: 0, duration: 380, onComplete: () => line.destroy() });
+      this.time.delayedCall(260, () => {
+        if (!enemy.active) return;
+        this.physics.moveToObject(enemy, this.player, 430);
+        if (Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y) < 85) this.hurtPlayer(Math.round(damage * 1.35));
+      });
+      return;
+    }
+    if ((type === 'bogling' || type === 'wraith') && distance < 340) {
+      enemy.setData('lastSpecial', time);
+      const target = { x: this.player.x, y: this.player.y };
+      const warning = this.add.circle(target.x, target.y, 48, 0x6ec7a4, .12).setStrokeStyle(4, type === 'wraith' ? 0xb88cf0 : 0x83d6ad, .9).setDepth(880);
+      this.tweens.add({ targets: warning, radius: 66, alpha: .35, duration: 480, onComplete: () => {
+        warning.destroy();
+        const burst = this.add.circle(target.x, target.y, 28, type === 'wraith' ? 0x8d63c4 : 0x4fa985, .7).setDepth(885);
+        this.tweens.add({ targets: burst, radius: 82, alpha: 0, duration: 350, onComplete: () => burst.destroy() });
+        if (Phaser.Math.Distance.Between(target.x, target.y, this.player.x, this.player.y) < 70) this.hurtPlayer(Math.round(damage * 1.25));
+      } });
+      return;
+    }
+    if (type === 'ashborn' && distance < 230) {
+      enemy.setData('lastSpecial', time);
+      const warning = this.add.circle(enemy.x, enemy.y, 45, 0xd95336, .14).setStrokeStyle(5, 0xff9d68, .9).setDepth(880);
+      this.tweens.add({ targets: warning, radius: 112, alpha: .38, duration: 560, onComplete: () => {
+        warning.destroy();
+        if (enemy.active && Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y) < 120) this.hurtPlayer(Math.round(damage * 1.45));
+      } });
+      return;
+    }
+    if (boss && distance < 520) {
+      enemy.setData('lastSpecial', time);
+      const target = { x: this.player.x, y: this.player.y };
+      const warning = this.add.circle(target.x, target.y, 75, 0x8b3d60, .1).setStrokeStyle(7, type === 'cinderlord' ? 0xff7247 : 0xd777bd, .95).setDepth(885);
+      this.tweens.add({ targets: warning, scale: 1.25, alpha: .4, duration: 720, onComplete: () => {
+        warning.destroy();
+        const wave = this.add.circle(target.x, target.y, 30, type === 'cinderlord' ? 0xf05b39 : 0xa64d8c, .75).setDepth(890);
+        this.tweens.add({ targets: wave, radius: 135, alpha: 0, duration: 500, onComplete: () => wave.destroy() });
+        if (Phaser.Math.Distance.Between(target.x, target.y, this.player.x, this.player.y) < 105) this.hurtPlayer(Math.round(damage * 1.6));
+      } });
+    }
+  }
+
   private hurtPlayer(amount: number): void {
     if (this.time.now < this.hurtReadyAt || !this.player.active) return;
     this.hurtReadyAt = this.time.now + 650;
@@ -821,6 +1045,7 @@ export class WorldScene extends Phaser.Scene {
     this.player.setTintFill(0xe45d78);
     this.time.delayedCall(110, () => this.player.clearTint());
     this.cameras.main.shake(130, .006);
+    this.cameras.main.flash(70, 120, 16, 38);
     this.sfx.hit();
     if (this.saves.get().health <= 0) this.die();
     this.emitHud(true);
@@ -903,7 +1128,7 @@ export class WorldScene extends Phaser.Scene {
     if (!this.nearest || this.uiLocked) return;
     const entity = this.nearest;
     if (entity.kind === 'npc') {
-      if (!this.saves.get().tutorialDone && this.saves.get().flags.tutorialMoved && this.saves.get().flags.tutorialAttacked && entity.id === 'mora') {
+      if (!this.saves.get().tutorialDone && this.saves.get().flags.tutorialMoved && this.saves.get().flags.tutorialAttacked && this.saves.get().flags.tutorialDashed && this.saves.get().flags.tutorialSpecial && entity.id === 'mora') {
         this.saves.mutate((save) => { save.tutorialDone = true; }, true);
         this.emitTutorial();
         GameEvents.emit('toast', 'Обучение завершено • поговорите с Морой о первой клятве');
@@ -931,6 +1156,12 @@ export class WorldScene extends Phaser.Scene {
       this.sfx.chest();
       GameEvents.emit('loot', { itemId, quantity });
       this.emitHud(true);
+      return;
+    }
+    if (entity.kind === 'rift') {
+      if (this.saves.get().flags[`rift-complete:${entity.id}`]) { GameEvents.emit('toast', 'Этот разлом уже очищен'); return; }
+      if (this.activeRift) { GameEvents.emit('toast', 'Сначала завершите активный разлом'); return; }
+      this.startRift(entity.id);
       return;
     }
     if (entity.kind === 'shrine') {
@@ -965,7 +1196,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private isInteractiveAvailable(entity: InteractiveEntity): boolean {
-    if (entity.kind === 'npc' || entity.kind === 'door' || entity.kind === 'chest' || entity.kind === 'shrine') return true;
+    if (entity.kind === 'npc' || entity.kind === 'door' || entity.kind === 'chest' || entity.kind === 'shrine' || entity.kind === 'rift') return true;
     if (entity.kind === 'lift' && this.saves.get().flags[entity.uniqueId]) return true;
     if (this.saves.get().flags[entity.uniqueId]) return false;
     return this.isObjectiveActive(entity.objectiveType!, entity.target!);
@@ -991,6 +1222,10 @@ export class WorldScene extends Phaser.Scene {
       } else if (entity.kind === 'shrine') {
         entity.object.setVisible(true).setTint(used ? 0x666570 : 0x9e76c2).setAlpha(used ? .65 : 1);
         entity.label = used ? 'Святилище молчит' : 'Коснуться святилища';
+      } else if (entity.kind === 'rift') {
+        const complete = Boolean(this.saves.get().flags[`rift-complete:${entity.id}`]);
+        entity.object.setVisible(true).setTint(complete ? 0x555866 : 0xbd6ed8).setAlpha(complete ? .55 : 1);
+        entity.label = complete ? 'Разлом очищен' : `Активировать разлом`;
       } else if (entity.kind === 'lift') {
         entity.object.setVisible(true).setAlpha(used ? 1 : this.isObjectiveActive('interact', 'mine_lift') ? 1 : .45);
       } else {
@@ -1125,13 +1360,23 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private updateLocation(): void {
-    const location = LOCATIONS.find((item) => Phaser.Geom.Rectangle.Contains(new Phaser.Geom.Rectangle(item.x, item.y, item.w, item.h), this.player.x, this.player.y));
+    const location = LOCATIONS.find((item) => {
+      const shape = MAP_SHAPES.find((entry) => entry.id === item.id);
+      if (!shape) return Phaser.Geom.Rectangle.Contains(new Phaser.Geom.Rectangle(item.x, item.y, item.w, item.h), this.player.x, this.player.y);
+      const polygon = new Phaser.Geom.Polygon(shape.points.split(' ').map((pair) => { const [x, y] = pair.split(',').map(Number); return { x, y }; }));
+      return Phaser.Geom.Polygon.Contains(polygon, this.player.x, this.player.y);
+    });
     const name = location?.name ?? 'Дороги Долины';
     if (name === this.lastLocation) return;
     this.lastLocation = name;
     GameEvents.emit('location', name);
     if (location) {
       this.sfx.setRegion(location.ambience, this.currentCombat);
+      const tintByRegion: Record<string, number> = { home: 0x4b304f, village: 0x52472f, cemetery: 0x39475a, forest: 0x244f3f, ruins: 0x59345e, marsh: 0x285f58, mines: 0x59402b, docks: 0x2b5265, citadel: 0x762f2a };
+      if (this.regionTint) {
+        this.regionTint.setFillStyle(tintByRegion[location.id] ?? 0x332342, .04).setAlpha(.03);
+        this.tweens.add({ targets: this.regionTint, alpha: location.danger >= 2 ? .11 : .065, duration: 900 });
+      }
       const newlyDiscovered = !this.saves.get().discoveredLocations.includes(location.id);
       if (newlyDiscovered) {
         this.saves.mutate((save) => { save.discoveredLocations.push(location.id); }, true);
@@ -1212,7 +1457,9 @@ export class WorldScene extends Phaser.Scene {
     if (save.tutorialDone) { GameEvents.emit('tutorial', null); return; }
     if (!save.flags.tutorialMoved) { GameEvents.emit('tutorial', { step: 1, title: 'Начните путь', text: 'Используйте WASD, стрелки или левый стик, чтобы двигаться.' }); return; }
     if (!save.flags.tutorialAttacked) { GameEvents.emit('tutorial', { step: 2, title: 'Обнажите клинок', text: 'Нажмите пробел, левую кнопку мыши или кнопку атаки.' }); return; }
-    GameEvents.emit('tutorial', { step: 3, title: 'Найдите клятву', text: 'Подойдите к Сестре Море и нажмите E или кнопку действия.' });
+    if (!save.flags.tutorialDashed) { GameEvents.emit('tutorial', { step: 3, title: 'Ускользните от удара', text: 'Нажмите Shift или голубую кнопку рывка. Во время рывка вы неуязвимы.' }); return; }
+    if (!save.flags.tutorialSpecial) { GameEvents.emit('tutorial', { step: 4, title: 'Высвободите силу оружия', text: 'Нажмите R или фиолетовую кнопку. Способность зависит от класса оружия.' }); return; }
+    GameEvents.emit('tutorial', { step: 5, title: 'Найдите клятву', text: 'Подойдите к Сестре Море и нажмите E или кнопку действия.' });
   }
 
   private emitHud(force = false): void {

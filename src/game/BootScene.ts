@@ -17,7 +17,7 @@ export class BootScene extends Phaser.Scene {
       if (this.anims.exists(key)) return;
       this.anims.create({
         key,
-        frames: [0, 1, 2, 3, 4, 5].map((index) => ({ key: `${prefix}-${index}` })),
+        frames: [0, 1, 2, 3, 4, 5, 6, 7].map((index) => ({ key: `${prefix}-${index}` })),
         frameRate: 11,
         repeat: -1,
       });

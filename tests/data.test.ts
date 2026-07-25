@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { BATTLE_PASS, ENEMIES, NPCS, QUESTS, WEAPONS } from '../src/data/content';
 import { ITEMS } from '../src/data/items';
-import { BUILDINGS, INTERIORS, LOCATIONS, WORLD_HEIGHT, WORLD_WIDTH } from '../src/data/world';
+import { BUILDINGS, INTERIORS, LOCATIONS, MAP_ROADS, MAP_SHAPES, RIFT_POINTS, WORLD_HEIGHT, WORLD_WIDTH } from '../src/data/world';
 import { InventorySystem } from '../src/systems/InventorySystem';
 import { QuestSystem } from '../src/systems/QuestSystem';
 import { SaveSystem } from '../src/systems/SaveSystem';
@@ -16,10 +16,21 @@ unique(QUESTS.map((item) => item.id), 'Quests');
 unique(NPCS.map((item) => item.id), 'NPCs');
 unique(BATTLE_PASS.map((item) => String(item.tier)), 'Battle-pass tiers');
 unique(LOCATIONS.map((item) => item.id), 'Locations');
+unique(MAP_SHAPES.map((item) => item.id), 'Map shapes');
+unique(RIFT_POINTS.map((item) => item.id), 'Rifts');
 unique(INTERIORS.map((item) => item.id), 'Interiors');
 assert.equal(LOCATIONS.length, 9, 'Expanded world contains nine regions');
 assert.equal(INTERIORS.length, 6, 'Six interiors are available');
 assert.ok(WORLD_WIDTH >= 4600 && WORLD_HEIGHT >= 3000, 'World dimensions are expanded');
+assert.deepEqual(new Set(MAP_SHAPES.map((shape) => shape.id)), new Set(LOCATIONS.map((location) => location.id)), 'Map and world use the same regions');
+for (const [index, location] of LOCATIONS.entries()) {
+  for (const other of LOCATIONS.slice(index + 1)) {
+    const overlap = location.x < other.x + other.w && location.x + location.w > other.x && location.y < other.y + other.h && location.y + location.h > other.y;
+    assert.equal(overlap, false, `Regions ${location.id} and ${other.id} do not overlap`);
+  }
+}
+for (const road of MAP_ROADS) for (const [x, y] of road) assert.ok(x >= 0 && x <= WORLD_WIDTH && y >= 0 && y <= WORLD_HEIGHT, 'Road points stay inside the world');
+for (const rift of RIFT_POINTS) assert.ok(rift.x >= 0 && rift.x <= WORLD_WIDTH && rift.y >= 0 && rift.y <= WORLD_HEIGHT, `Rift ${rift.id} stays inside the world`);
 for (const building of BUILDINGS.filter((entry) => entry.interior)) assert.ok(INTERIORS.some((interior) => interior.id === building.interior), `Building ${building.id} points to a valid interior`);
 
 const weaponIds = new Set(WEAPONS.map((item) => item.id));
