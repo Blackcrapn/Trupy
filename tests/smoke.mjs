@@ -45,7 +45,7 @@ async function runDesktop() {
   assert.match(await page.locator('#panel-title').textContent(), /Инвентарь/);
   await page.screenshot({ path: 'test-output/inventory-desktop.png', fullPage: true });
   await page.locator('.close-button').click();
-  await page.keyboard.press('Escape');
+  await page.locator('[data-panel="pause"]').click();
   await page.waitForSelector('#screen-panel[aria-hidden="false"]');
   assert.equal(await page.locator('[data-volume]').count(), 4);
   await page.locator('.close-button').click();
