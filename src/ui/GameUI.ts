@@ -1,6 +1,8 @@
-import { BATTLE_PASS, QUESTS, WEAPONS, XP_FOR_LEVEL } from '../data/content';
+import { BATTLE_PASS, QUESTS, WEAPONS } from '../data/content';
+import { ITEMS, RARITY_COLOR, RARITY_LABEL, getItem } from '../data/items';
+import { WORLD_HEIGHT, WORLD_WIDTH } from '../data/world';
 import { GameEvents } from '../game/events';
-import type { DialoguePayload, HudSnapshot, PlayerSave } from '../game/types';
+import type { DialoguePayload, HudSnapshot, ItemCategory, PlayerSave } from '../game/types';
 
 const questStatusLabel: Record<string, string> = {
   available: 'Доступно', active: 'В процессе', ready: 'Можно сдать', completed: 'Завершено',
@@ -12,6 +14,7 @@ export class GameUI {
   private save?: PlayerSave;
   private activePanel?: string;
   private toastTimer?: number;
+  private lootTimer?: number;
   private joystickPointer?: number;
   private joystickCenter = { x: 0, y: 0 };
   private worldPosition = { x: 420, y: 520 };
@@ -51,7 +54,8 @@ export class GameUI {
         <aside class="minimap-wrap" aria-label="Мини-карта">
           <div class="minimap">
             <span class="mini-zone home"></span><span class="mini-zone village"></span><span class="mini-zone cemetery"></span>
-            <span class="mini-zone forest"></span><span class="mini-zone ruins"></span><span class="mini-road r1"></span><span class="mini-road r2"></span>
+            <span class="mini-zone forest"></span><span class="mini-zone ruins"></span><span class="mini-zone marsh"></span><span class="mini-zone mines"></span>
+            <span class="mini-zone docks"></span><span class="mini-zone citadel"></span><span class="mini-road r1"></span><span class="mini-road r2"></span><span class="mini-road r3"></span>
             <span class="mini-player" id="mini-player"></span>
           </div>
           <span class="location-name" id="location-label">ДОМ ИЗГНАННИКА</span>
@@ -59,7 +63,7 @@ export class GameUI {
 
         <nav class="quick-nav" aria-label="Игровые меню">
           <button data-panel="journal"><span>Q</span>Задания</button>
-          <button data-panel="inventory"><span>I</span>Арсенал</button>
+          <button data-panel="inventory"><span>I</span>Инвентарь</button>
           <button data-panel="map"><span>M</span>Карта</button>
           <button data-panel="pass"><span>B</span>Пропуск</button>
           <button data-panel="pause"><span>Esc</span>Меню</button>
@@ -75,6 +79,8 @@ export class GameUI {
         <div class="interaction-prompt" id="interaction-prompt"><kbd>E</kbd><span id="interaction-text">Говорить</span></div>
         <div class="tutorial-tip" id="tutorial-tip"><span class="tutorial-step">ОБУЧЕНИЕ 1/3</span><strong>Начните путь</strong><p>Используйте WASD или левый стик, чтобы двигаться.</p></div>
         <div class="toast" id="toast" role="status"></div>
+        <div class="loot-banner" id="loot-banner" role="status"><span id="loot-icon">◆</span><div><small>ПОЛУЧЕНО</small><strong id="loot-name">Предмет</strong></div><b id="loot-quantity">+1</b></div>
+        <div class="combo-banner" id="combo-banner"><strong id="combo-hits">2</strong><div><span>СЕРИЯ</span><b id="combo-multiplier">×1.03</b></div></div>
 
         <div class="mobile-controls" aria-label="Сенсорное управление">
           <div class="joystick" id="joystick"><span id="joystick-stick"></span></div>
@@ -101,7 +107,7 @@ export class GameUI {
         </div>
 
         <div class="death-screen" id="death-screen" aria-hidden="true"><div><span>ПОГИБЕЛЬ — НЕ КОНЕЦ</span><h2>Долина вернула вас домой</h2><p>Часть золота потеряна, но клятва остаётся.</p><button id="respawn-button">ВОЗРОДИТЬСЯ</button></div></div>
-        <div class="ending-screen" id="ending-screen" aria-hidden="true"><div class="ending-sigil">✺</div><span>ВЕРТИКАЛЬНЫЙ СРЕЗ ЗАВЕРШЁН</span><h2>Проклятие отступило</h2><p>Вы победили Безымянную и доказали, что Долину ещё можно спасти.</p><div class="ending-stats" id="ending-stats"></div><button data-ending-close>ПРОДОЛЖИТЬ ИССЛЕДОВАНИЕ</button></div>
+        <div class="ending-screen" id="ending-screen" aria-hidden="true"><div class="ending-sigil">✺</div><span>ГЛАВА II ЗАВЕРШЕНА</span><h2>Пепельная корона разбита</h2><p>Безымянная пала, Чёрная топь открыла свои тайны, а огонь цитадели больше не пожирает Долину.</p><div class="ending-stats" id="ending-stats"></div><button data-ending-close>ПРОДОЛЖИТЬ ИССЛЕДОВАНИЕ</button></div>
       </div>
     `;
     this.bindDomEvents();
@@ -118,13 +124,13 @@ export class GameUI {
     this.worldPosition = { x, y };
     const marker = this.root.querySelector<HTMLElement>('#mini-player');
     if (marker) {
-      marker.style.left = `${Math.max(3, Math.min(97, x / 2800 * 100))}%`;
-      marker.style.top = `${Math.max(4, Math.min(96, y / 1800 * 100))}%`;
+      marker.style.left = `${Math.max(3, Math.min(97, x / WORLD_WIDTH * 100))}%`;
+      marker.style.top = `${Math.max(4, Math.min(96, y / WORLD_HEIGHT * 100))}%`;
     }
     const mapMarker = this.root.querySelector<HTMLElement>('#map-player');
     if (mapMarker) {
-      mapMarker.style.left = `${x / 2800 * 100}%`;
-      mapMarker.style.top = `${y / 1800 * 100}%`;
+      mapMarker.style.left = `${x / WORLD_WIDTH * 100}%`;
+      mapMarker.style.top = `${y / WORLD_HEIGHT * 100}%`;
     }
   }
 
@@ -151,6 +157,8 @@ export class GameUI {
       if (this.activePanel) this.renderPanel(this.activePanel);
     });
     this.on<string>('toast', (message) => this.showToast(message));
+    this.on<{ itemId: string; quantity: number }>('loot', (loot) => this.showLoot(loot.itemId, loot.quantity));
+    this.on<{ hits: number; multiplier: number }>('combo', ({ hits, multiplier }) => this.showCombo(hits, multiplier));
     this.on<string>('location', (location) => {
       const label = this.root.querySelector('#location-label');
       if (label) label.textContent = location.toUpperCase();
@@ -282,10 +290,11 @@ export class GameUI {
       pass: () => this.passHtml(),
       pause: () => this.pauseHtml(),
       shop: () => this.shopHtml(),
+      chest: () => this.chestHtml(),
     };
     const labels: Record<string, [string, string]> = {
-      journal: ['ЖУРНАЛ', 'Задания'], inventory: ['АРСЕНАЛ', 'Оружие'], map: ['ДОЛИНА МЁРТВЫХ', 'Карта'],
-      pass: ['СЕЗОН I • БЕСПЛАТНО', 'Путь изгнанника'], pause: ['TRUPY', 'Пауза'], shop: ['КУЗНИЦА РУНЫ', 'Магазин оружия'],
+      journal: ['ЖУРНАЛ', 'Задания'], inventory: ['СУМКА ИЗГНАННИКА', 'Инвентарь'], map: ['ДОЛИНА МЁРТВЫХ', 'Карта'],
+      pass: ['СЕЗОН II • БЕСПЛАТНО', 'Путь изгнанника'], pause: ['TRUPY', 'Пауза'], shop: ['КУЗНИЦА РУНЫ', 'Магазин оружия'], chest: ['ДОМ ИЗГНАННИКА', 'Домашний сундук'],
     };
     [eyebrow.textContent, title.textContent] = labels[panel] ?? ['TRUPY', 'Меню'];
     content.innerHTML = (renderers[panel] ?? renderers.pause)();
@@ -303,9 +312,59 @@ export class GameUI {
   }
 
   private inventoryHtml(): string {
-    const owned = this.snapshot?.ownedWeapons ?? [];
-    return `<div class="panel-intro split"><p>Выберите оружие под задачу. Арбалет поражает костяные печати, магия особенно сильна в руинах.</p><div class="coin-chip">◆ ${this.snapshot?.coins ?? 0}</div></div><div class="weapon-grid">${WEAPONS.filter((weapon) => owned.includes(weapon.id)).map((weapon) => `
-      <article class="weapon-card ${this.snapshot?.equippedWeapon === weapon.id ? 'equipped' : ''}" style="--accent:${weapon.accent}"><div class="weapon-art">${weapon.icon}</div><span>${weapon.kind.toUpperCase()} • УРОН ${weapon.damage}</span><h3>${weapon.name}</h3><p>${weapon.description}</p><button data-equip="${weapon.id}" ${this.snapshot?.equippedWeapon === weapon.id ? 'disabled' : ''}>${this.snapshot?.equippedWeapon === weapon.id ? 'ЭКИПИРОВАНО' : 'ЭКИПИРОВАТЬ'}</button></article>`).join('')}</div>`;
+    const snapshot = this.snapshot;
+    if (!snapshot) return '<div class="empty-state">Инвентарь загружается…</div>';
+    const equippedArmor = getItem(snapshot.equipment.armor ?? '');
+    const equippedAmulet = getItem(snapshot.equipment.amulet ?? '');
+    const equippedWeapon = WEAPONS.find((weapon) => weapon.id === snapshot.equippedWeapon) ?? WEAPONS[0];
+    const itemStacks = snapshot.inventory
+      .map((stack) => ({ stack, item: getItem(stack.itemId) }))
+      .filter((entry): entry is { stack: { itemId: string; quantity: number }; item: NonNullable<ReturnType<typeof getItem>> } => Boolean(entry.item));
+    return `<div class="inventory-layout">
+      <aside class="equipment-paperdoll">
+        <span class="eyebrow">ЭКИПИРОВКА</span><div class="paperdoll-silhouette">†</div>
+        <div class="equipment-slot weapon"><small>ОРУЖИЕ</small><b>${equippedWeapon.icon} ${equippedWeapon.name}</b></div>
+        <div class="equipment-slot armor"><small>БРОНЯ</small><b>${equippedArmor ? `${equippedArmor.icon} ${equippedArmor.name}` : '— Пусто —'}</b></div>
+        <div class="equipment-slot amulet"><small>АМУЛЕТ</small><b>${equippedAmulet ? `${equippedAmulet.icon} ${equippedAmulet.name}` : '— Пусто —'}</b></div>
+        <div class="equipment-stats"><span>Защита <b>+${equippedArmor?.armor ?? 0}</b></span><span>Урон <b>+${equippedAmulet?.damageBonus ?? 0}</b></span><span>Скорость <b>+${equippedAmulet?.speedBonus ?? 0}</b></span></div>
+      </aside>
+      <section class="inventory-bag">
+        <div class="panel-intro split"><p>Экипируйте броню и амулеты, используйте расходники и собирайте материалы для будущих улучшений.</p><div class="bag-meta"><span>◆ ${snapshot.coins}</span><span>${snapshot.inventory.reduce((sum, stack) => sum + stack.quantity, 0)} предметов</span></div></div>
+        <h3 class="inventory-section-title">Оружие</h3><div class="inventory-grid weapons">${WEAPONS.filter((weapon) => snapshot.ownedWeapons.includes(weapon.id)).map((weapon) => this.weaponInventoryCard(weapon.id)).join('')}</div>
+        <h3 class="inventory-section-title">Содержимое сумки</h3><div class="inventory-grid">${itemStacks.map(({ stack, item }) => this.itemInventoryCard(item.id, stack.quantity)).join('') || '<div class="empty-state">Сумка пуста</div>'}</div>
+      </section>
+    </div>`;
+  }
+
+  private weaponInventoryCard(weaponId: string): string {
+    const weapon = WEAPONS.find((entry) => entry.id === weaponId)!;
+    const equipped = this.snapshot?.equippedWeapon === weapon.id;
+    return `<article class="inventory-item weapon-item ${equipped ? 'equipped' : ''}" style="--rarity:${weapon.accent}"><div class="item-icon">${weapon.icon}</div><div class="item-copy"><small>${weapon.kind.toUpperCase()} • УРОН ${weapon.damage}</small><b>${weapon.name}</b><p>${weapon.description}</p></div><button data-equip="${weapon.id}" ${equipped ? 'disabled' : ''}>${equipped ? 'НАДЕТО' : 'ЭКИПИРОВАТЬ'}</button></article>`;
+  }
+
+  private itemInventoryCard(itemId: string, quantity: number, chest = false, allowStore = false): string {
+    const item = getItem(itemId);
+    if (!item) return '';
+    const equipped = this.snapshot?.equipment.armor === itemId || this.snapshot?.equipment.amulet === itemId;
+    const primary = chest ? '' : item.category === 'consumable'
+      ? `<button data-use-item="${itemId}">ИСПОЛЬЗОВАТЬ</button>`
+      : item.category === 'armor' || item.category === 'amulet'
+        ? `<button data-equip-item="${itemId}" ${equipped ? 'disabled' : ''}>${equipped ? 'НАДЕТО' : 'ЭКИПИРОВАТЬ'}</button>`
+        : '';
+    const transfer = chest
+      ? `<button class="subtle" data-transfer-item="${itemId}" data-direction="toInventory">В СУМКУ</button>`
+      : allowStore && item.category !== 'quest' ? `<button class="subtle" data-transfer-item="${itemId}" data-direction="toChest">В СУНДУК</button>` : '';
+    return `<article class="inventory-item ${equipped ? 'equipped' : ''}" style="--rarity:${RARITY_COLOR[item.rarity]}"><div class="item-icon">${item.icon}<em>${quantity > 1 ? quantity : ''}</em></div><div class="item-copy"><small>${RARITY_LABEL[item.rarity]} • ${this.categoryLabel(item.category)}</small><b>${item.name}</b><p>${item.description}</p></div><div class="item-actions">${primary}${transfer}</div></article>`;
+  }
+
+  private chestHtml(): string {
+    const inventory = this.snapshot?.inventory ?? [];
+    const chest = this.snapshot?.chest ?? [];
+    return `<div class="chest-layout"><section><span class="eyebrow">ВАША СУМКА</span><h3>Перенести в сундук</h3><div class="inventory-grid compact">${inventory.map((stack) => this.itemInventoryCard(stack.itemId, stack.quantity, false, true)).join('') || '<div class="empty-state">Сумка пуста</div>'}</div></section><div class="chest-divider">⇄</div><section><span class="eyebrow">ХРАНИЛИЩЕ</span><h3>Домашний сундук</h3><div class="inventory-grid compact">${chest.map((stack) => this.itemInventoryCard(stack.itemId, stack.quantity, true)).join('') || '<div class="empty-state">Сундук пуст</div>'}</div></section></div>`;
+  }
+
+  private categoryLabel(category: Exclude<ItemCategory, 'weapon'>): string {
+    return { armor: 'Броня', amulet: 'Амулет', consumable: 'Расходник', material: 'Материал', quest: 'Задание' }[category];
   }
 
   private shopHtml(): string {
@@ -328,20 +387,34 @@ export class GameUI {
   }
 
   private mapHtml(): string {
-    return `<div class="world-map"><div class="map-zone home"><b>Дом</b></div><div class="map-zone village"><b>Серый Холм</b></div><div class="map-zone cemetery"><b>Кладбище</b></div><div class="map-zone forest"><b>Шепчущий лес</b></div><div class="map-zone ruins"><b>Руины</b></div><span class="map-road road-a"></span><span class="map-road road-b"></span><span class="map-river"></span><span class="map-player" id="map-player"><i></i>ВЫ</span></div><div class="map-legend"><span><i class="safe"></i> Безопасная зона</span><span><i class="danger"></i> Опасная зона</span><span><b>◆</b> Кузница</span><span><b>†</b> Задания</span></div>`;
+    const discovered = new Set(this.snapshot?.discoveredLocations ?? []);
+    const zone = (id: string, label: string) => `<div class="map-zone ${id} ${discovered.has(id) ? 'discovered' : 'undiscovered'}"><b>${discovered.has(id) ? label : '???'}</b></div>`;
+    return `<div class="world-map expanded">${zone('home','Дом')}${zone('village','Серый Холм')}${zone('cemetery','Кладбище')}${zone('forest','Шепчущий лес')}${zone('ruins','Руины')}${zone('marsh','Чёрное болото')}${zone('mines','Старые шахты')}${zone('docks','Пристань')}${zone('citadel','Пепельная цитадель')}<span class="map-road road-a"></span><span class="map-road road-b"></span><span class="map-road road-c"></span><span class="map-river"></span><span class="map-player" id="map-player"><i></i>ВЫ</span></div><div class="map-legend"><span><i class="safe"></i> Безопасная зона</span><span><i class="danger"></i> Опасная зона</span><span><b>◆</b> Кузница</span><span><b>▤</b> Интерьер</span><span><b>†</b> Задания</span></div>`;
   }
 
   private pauseHtml(): string {
-    return `<div class="pause-layout"><div class="pause-copy"><p>Прогресс сохраняется автоматически на этом устройстве.</p><dl><div><dt>Уровень</dt><dd>${this.snapshot?.level ?? 1}</dd></div><div><dt>Репутация</dt><dd>${this.snapshot?.reputation ?? 0}</dd></div><div><dt>Заданий завершено</dt><dd>${this.snapshot?.quests.filter((q) => q.status === 'completed').length ?? 0}</dd></div></dl></div><div class="pause-actions"><button data-resume>ПРОДОЛЖИТЬ</button><button data-toggle-sound>${this.save?.settings.sound ? 'ЗВУК: ВКЛ' : 'ЗВУК: ВЫКЛ'}</button><button data-toggle-motion>${this.save?.settings.reducedMotion ? 'АНИМАЦИИ: МИНИМУМ' : 'АНИМАЦИИ: ПОЛНЫЕ'}</button><button data-fullscreen>ПОЛНЫЙ ЭКРАН</button><button class="danger" data-reset>НАЧАТЬ ЗАНОВО</button></div><div class="controls-card"><h3>Управление</h3><p><kbd>WASD</kbd> Движение</p><p><kbd>E</kbd> Действие</p><p><kbd>ЛКМ</kbd> / <kbd>Space</kbd> Атака</p><p><kbd>F</kbd> Зелье</p><p><kbd>Q I M B</kbd> Меню</p></div></div>`;
+    const settings = this.save?.settings;
+    const slider = (key: 'masterVolume' | 'musicVolume' | 'sfxVolume' | 'ambienceVolume', label: string) => `<label class="volume-row"><span>${label}<b>${Math.round((settings?.[key] ?? 0) * 100)}%</b></span><input type="range" min="0" max="1" step="0.05" value="${settings?.[key] ?? 0}" data-volume="${key}"></label>`;
+    return `<div class="pause-layout v2"><div class="pause-copy"><span class="eyebrow">ВЕРСИЯ 2 • РАСШИРЕННАЯ ДОЛИНА</span><p>Прогресс сохраняется автоматически, включая инвентарь, экипировку, открытые районы и текущую сцену.</p><dl><div><dt>Уровень</dt><dd>${this.snapshot?.level ?? 1}</dd></div><div><dt>Репутация</dt><dd>${this.snapshot?.reputation ?? 0}</dd></div><div><dt>Открыто районов</dt><dd>${this.snapshot?.discoveredLocations.length ?? 0}/9</dd></div><div><dt>Заданий завершено</dt><dd>${this.snapshot?.quests.filter((q) => q.status === 'completed').length ?? 0}</dd></div></dl></div><div class="audio-settings"><h3>Звук</h3>${slider('masterVolume','Общая громкость')}${slider('musicVolume','Музыка')}${slider('sfxVolume','Эффекты')}${slider('ambienceVolume','Окружение')}<button data-toggle-sound>${settings?.sound ? 'ВЫКЛЮЧИТЬ ВЕСЬ ЗВУК' : 'ВКЛЮЧИТЬ ЗВУК'}</button></div><div class="pause-actions"><button data-resume>ПРОДОЛЖИТЬ</button><button data-toggle-motion>${settings?.reducedMotion ? 'АНИМАЦИИ: МИНИМУМ' : 'АНИМАЦИИ: ПОЛНЫЕ'}</button><button data-toggle-quality>КАЧЕСТВО: ${(settings?.quality ?? 'auto').toUpperCase()}</button><button data-fullscreen>ПОЛНЫЙ ЭКРАН</button><button class="danger" data-reset>НАЧАТЬ ЗАНОВО</button></div><div class="controls-card"><h3>Управление</h3><p><kbd>WASD</kbd> Движение</p><p><kbd>E</kbd> Действие / дверь</p><p><kbd>ЛКМ</kbd> / <kbd>Space</kbd> Атака</p><p><kbd>F</kbd> Быстрое зелье</p><p><kbd>Q I M B</kbd> Меню</p></div></div>`;
   }
 
   private bindPanelActions(): void {
     this.root.querySelectorAll<HTMLElement>('[data-equip]').forEach((button) => button.addEventListener('click', () => GameEvents.emit('equip', button.dataset.equip)));
     this.root.querySelectorAll<HTMLElement>('[data-buy]').forEach((button) => button.addEventListener('click', () => GameEvents.emit('buy', button.dataset.buy)));
     this.root.querySelectorAll<HTMLElement>('[data-claim]').forEach((button) => button.addEventListener('click', () => GameEvents.emit('claim-tier', Number(button.dataset.claim))));
+    this.root.querySelectorAll<HTMLElement>('[data-equip-item]').forEach((button) => button.addEventListener('click', () => GameEvents.emit('equip-item', button.dataset.equipItem)));
+    this.root.querySelectorAll<HTMLElement>('[data-use-item]').forEach((button) => button.addEventListener('click', () => GameEvents.emit('use-item', button.dataset.useItem)));
+    this.root.querySelectorAll<HTMLElement>('[data-transfer-item]').forEach((button) => button.addEventListener('click', () => GameEvents.emit('transfer-item', { itemId: button.dataset.transferItem, direction: button.dataset.direction })));
+    this.root.querySelectorAll<HTMLInputElement>('[data-volume]').forEach((input) => input.addEventListener('input', () => {
+      const value = Number(input.value);
+      const label = input.parentElement?.querySelector('b');
+      if (label) label.textContent = `${Math.round(value * 100)}%`;
+      GameEvents.emit('set-volume', { key: input.dataset.volume, value });
+    }));
     this.root.querySelector('[data-resume]')?.addEventListener('click', () => this.closePanel());
     this.root.querySelector('[data-toggle-sound]')?.addEventListener('click', () => GameEvents.emit('toggle-sound'));
     this.root.querySelector('[data-toggle-motion]')?.addEventListener('click', () => GameEvents.emit('toggle-motion'));
+    this.root.querySelector('[data-toggle-quality]')?.addEventListener('click', () => GameEvents.emit('toggle-quality'));
     this.root.querySelector('[data-fullscreen]')?.addEventListener('click', () => GameEvents.emit('fullscreen'));
     this.root.querySelector('[data-reset]')?.addEventListener('click', () => {
       if (window.confirm('Удалить весь прогресс Trupy и начать заново?')) GameEvents.emit('reset-game');
@@ -388,6 +461,30 @@ export class GameUI {
     if (step) step.textContent = `ОБУЧЕНИЕ ${tip.step}/3`;
     if (title) title.textContent = tip.title;
     if (text) text.textContent = tip.text;
+  }
+
+  private showCombo(hits: number, multiplier: number): void {
+    const banner = this.root.querySelector<HTMLElement>('#combo-banner');
+    if (!banner) return;
+    if (hits <= 0) { banner.classList.remove('visible'); return; }
+    this.text('#combo-hits', hits.toString());
+    this.text('#combo-multiplier', `×${multiplier.toFixed(2)}`);
+    banner.classList.add('visible');
+    banner.classList.toggle('hot', hits >= 6);
+  }
+
+  private showLoot(itemId: string, quantity: number): void {
+    const item = getItem(itemId);
+    const banner = this.root.querySelector<HTMLElement>('#loot-banner');
+    if (!item || !banner) return;
+    window.clearTimeout(this.lootTimer);
+    this.text('#loot-icon', item.icon);
+    this.text('#loot-name', item.name);
+    this.text('#loot-quantity', `+${quantity}`);
+    banner.style.setProperty('--loot-color', RARITY_COLOR[item.rarity]);
+    banner.classList.remove('visible');
+    requestAnimationFrame(() => banner.classList.add('visible'));
+    this.lootTimer = window.setTimeout(() => banner.classList.remove('visible'), 2300);
   }
 
   private showToast(message: string): void {

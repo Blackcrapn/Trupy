@@ -3,6 +3,7 @@ import './styles.css';
 import { BootScene } from './game/BootScene';
 import { MenuScene } from './game/MenuScene';
 import { WorldScene } from './game/WorldScene';
+import { InteriorScene } from './game/InteriorScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -28,7 +29,7 @@ const config: Phaser.Types.Core.GameConfig = {
   input: {
     activePointers: 4,
   },
-  scene: [BootScene, MenuScene, WorldScene],
+  scene: [BootScene, MenuScene, WorldScene, InteriorScene],
 };
 
 const game = new Phaser.Game(config);

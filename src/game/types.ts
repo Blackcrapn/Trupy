@@ -1,6 +1,35 @@
 export type WeaponKind = 'melee' | 'ranged' | 'magic';
 export type ObjectiveType = 'collect' | 'kill' | 'purchase' | 'interact' | 'visit';
 export type QuestStatus = 'available' | 'active' | 'ready' | 'completed';
+export type ItemCategory = 'weapon' | 'armor' | 'amulet' | 'consumable' | 'material' | 'quest';
+export type ItemRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
+
+export interface InventoryStack {
+  itemId: string;
+  quantity: number;
+}
+
+export interface ItemDefinition {
+  id: string;
+  name: string;
+  description: string;
+  category: Exclude<ItemCategory, 'weapon'>;
+  rarity: ItemRarity;
+  icon: string;
+  stackLimit: number;
+  value: number;
+  heal?: number;
+  armor?: number;
+  damageBonus?: number;
+  speedBonus?: number;
+}
+
+export interface EquipmentState {
+  weapon: string;
+  armor?: string;
+  amulet?: string;
+  quick: Array<string | null>;
+}
 
 export interface WeaponDefinition {
   id: string;
@@ -29,6 +58,7 @@ export interface QuestReward {
   xp: number;
   reputation: number;
   potions?: number;
+  items?: InventoryStack[];
 }
 
 export interface QuestDefinition {
@@ -68,6 +98,12 @@ export interface PlayerSave {
   potions: number;
   ownedWeapons: string[];
   equippedWeapon: string;
+  inventory: InventoryStack[];
+  chest: InventoryStack[];
+  equipment: EquipmentState;
+  discoveredLocations: string[];
+  currentScene: 'world' | string;
+  playerPosition?: { x: number; y: number };
   questProgress: Record<string, QuestProgress>;
   claimedTiers: number[];
   flags: Record<string, boolean>;
@@ -75,7 +111,12 @@ export interface PlayerSave {
   playtime: number;
   settings: {
     sound: boolean;
+    masterVolume: number;
+    musicVolume: number;
+    sfxVolume: number;
+    ambienceVolume: number;
     reducedMotion: boolean;
+    quality: 'auto' | 'high' | 'low';
   };
 }
 
@@ -89,6 +130,7 @@ export interface EnemyDefinition {
   rewardCoins: number;
   tint: number;
   scale?: number;
+  drops?: Array<{ itemId: string; chance: number; min: number; max: number }>;
 }
 
 export interface HudSnapshot {
@@ -102,6 +144,12 @@ export interface HudSnapshot {
   potions: number;
   equippedWeapon: string;
   ownedWeapons: string[];
+  inventory: InventoryStack[];
+  chest: InventoryStack[];
+  equipment: EquipmentState;
+  discoveredLocations: string[];
+  currentScene: string;
+  settings: PlayerSave['settings'];
   activeQuest?: {
     title: string;
     objective: string;

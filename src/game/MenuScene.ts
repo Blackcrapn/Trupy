@@ -1,5 +1,8 @@
 import Phaser from 'phaser';
 import { GameEvents } from './events';
+import { audio } from '../systems/AudioManager';
+import { SaveSystem } from '../systems/SaveSystem';
+import { getInterior } from '../data/world';
 
 export class MenuScene extends Phaser.Scene {
   private particles: Phaser.GameObjects.Rectangle[] = [];
@@ -73,8 +76,16 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private startGame(): void {
+    void audio.unlock();
     GameEvents.emit('audio-unlock');
-    this.cameras.main.fadeOut(350, 9, 11, 18);
-    this.time.delayedCall(360, () => this.scene.start('WorldScene'));
+    this.cameras.main.flash(160, 168, 100, 141);
+    this.cameras.main.fadeOut(420, 9, 11, 18);
+    this.time.delayedCall(430, () => {
+      const save = new SaveSystem().get();
+      if (save.currentScene !== 'world' && getInterior(save.currentScene)) {
+        const point = save.playerPosition ?? { x: 430, y: 585 };
+        this.scene.start('InteriorScene', { interiorId: save.currentScene, returnX: point.x, returnY: point.y });
+      } else this.scene.start('WorldScene');
+    });
   }
 }

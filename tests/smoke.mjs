@@ -27,13 +27,43 @@ async function runDesktop() {
   await page.screenshot({ path: 'test-output/game-desktop.png', fullPage: true });
   assert.equal(await page.locator('.game-ui').count(), 1);
   assert.equal(await page.locator('#coins-label').textContent(), '35');
+  const measuredFps = await page.evaluate(() => new Promise((resolve) => {
+    let frames = 0;
+    const start = performance.now();
+    const frame = () => {
+      frames += 1;
+      if (performance.now() - start >= 1000) resolve(frames); else requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }));
+  assert.ok(Number(measuredFps) >= 5, `Expected the headless renderer to remain responsive, got ${measuredFps}`);
+  await page.waitForFunction(() => document.documentElement.dataset.audio === 'running');
+  const saveVersion = await page.evaluate(() => JSON.parse(localStorage.getItem('trupy-save-v1') ?? '{}').version);
+  assert.equal(saveVersion, 2);
+  await page.keyboard.press('i');
+  await page.waitForSelector('#screen-panel[aria-hidden="false"]');
+  assert.match(await page.locator('#panel-title').textContent(), /Инвентарь/);
+  await page.screenshot({ path: 'test-output/inventory-desktop.png', fullPage: true });
+  await page.locator('.close-button').click();
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('#screen-panel[aria-hidden="false"]');
+  assert.equal(await page.locator('[data-volume]').count(), 4);
+  await page.locator('.close-button').click();
   await page.keyboard.press('m');
   await page.waitForSelector('#screen-panel[aria-hidden="false"]');
+  assert.equal(await page.locator('.map-zone').count(), 9);
   await page.screenshot({ path: 'test-output/map-desktop.png', fullPage: true });
   await page.locator('.close-button').click();
   await page.keyboard.press('q');
   await page.waitForSelector('#screen-panel[aria-hidden="false"]');
   assert.match(await page.locator('#panel-title').textContent(), /Задания/);
+  await page.locator('.close-button').click();
+  await page.keyboard.press('e');
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('trupy-save-v1') ?? '{}').currentScene === 'player_home');
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: 'test-output/interior-desktop.png', fullPage: true });
+  await page.keyboard.press('e');
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('trupy-save-v1') ?? '{}').currentScene === 'world');
   await page.close();
 }
 
@@ -50,6 +80,11 @@ async function runMobile() {
   assert.notEqual(display, 'none');
   const joystickBox = await page.locator('#joystick').boundingBox();
   assert.ok(joystickBox && joystickBox.width > 80);
+  await page.locator('[data-panel="inventory"]').click();
+  await page.waitForSelector('#screen-panel[aria-hidden="false"]');
+  assert.equal(await page.locator('.equipment-paperdoll').count(), 1);
+  await page.screenshot({ path: 'test-output/inventory-mobile.png', fullPage: true });
+  await page.locator('.close-button').click();
   await page.setViewportSize({ width: 844, height: 390 });
   await page.waitForTimeout(300);
   await page.screenshot({ path: 'test-output/game-mobile-landscape.png', fullPage: true });

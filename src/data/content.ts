@@ -82,6 +82,33 @@ export const WEAPONS: WeaponDefinition[] = [
     icon: '✺',
     accent: '#c982ff',
   },
+  {
+    id: 'bogreaper',
+    name: 'Серп Чёрной топи',
+    description: 'Изогнутое оружие болотных охотников быстро добивает раненых.',
+    kind: 'melee',
+    price: 520,
+    damage: 68,
+    cooldown: 330,
+    range: 76,
+    requiredRep: 11,
+    icon: '◜',
+    accent: '#72c7a0',
+  },
+  {
+    id: 'cinderbrand',
+    name: 'Пепельное клеймо',
+    description: 'Клинок цитадели оставляет за ударом горящий след.',
+    kind: 'magic',
+    price: 720,
+    damage: 86,
+    cooldown: 560,
+    range: 500,
+    projectileSpeed: 420,
+    requiredRep: 16,
+    icon: '✹',
+    accent: '#ff8a5c',
+  },
 ];
 
 export const QUESTS: QuestDefinition[] = [
@@ -182,6 +209,82 @@ export const QUESTS: QuestDefinition[] = [
     ],
     reward: { coins: 115, xp: 100, reputation: 1 },
   },
+  {
+    id: 'blackwater_call',
+    title: 'Зов Чёрной воды',
+    description: 'Перевозчик видел в топи огни, которых не должно быть. Соберите тростник и очистите путь.',
+    giver: 'ferryman',
+    category: 'main',
+    prerequisite: 'heart_of_ruin',
+    objectives: [
+      { type: 'collect', target: 'bog_reed', label: 'Соберите болотный тростник', amount: 4 },
+      { type: 'kill', target: 'bogling', label: 'Уничтожьте утопленников', amount: 4 },
+    ],
+    reward: { coins: 260, xp: 280, reputation: 2, items: [{ itemId: 'greater_vial', quantity: 1 }] },
+  },
+  {
+    id: 'mine_echo',
+    title: 'Эхо под камнем',
+    description: 'Шахтёр Брам просит спуститься к старому подъёмнику и остановить то, что стучит из глубины.',
+    giver: 'bram',
+    category: 'main',
+    prerequisite: 'blackwater_call',
+    objectives: [
+      { type: 'visit', target: 'mines', label: 'Доберитесь до Старых шахт', amount: 1 },
+      { type: 'kill', target: 'cavecrawler', label: 'Уничтожьте пещерных тварей', amount: 4 },
+      { type: 'interact', target: 'mine_lift', label: 'Запустите древний подъёмник', amount: 1 },
+    ],
+    reward: { coins: 310, xp: 340, reputation: 2, items: [{ itemId: 'grave_warden_mail', quantity: 1 }] },
+  },
+  {
+    id: 'ash_crown',
+    title: 'Корона из пепла',
+    description: 'Открытые шахты ведут к Пепельной цитадели. Остановите Владыку углей до нового выброса.',
+    giver: 'mora',
+    category: 'main',
+    prerequisite: 'mine_echo',
+    objectives: [
+      { type: 'visit', target: 'citadel', label: 'Войдите в Пепельную цитадель', amount: 1 },
+      { type: 'kill', target: 'cinderlord', label: 'Победите Владыку углей', amount: 1 },
+    ],
+    reward: { coins: 520, xp: 520, reputation: 3, items: [{ itemId: 'ember_eye', quantity: 1 }] },
+  },
+  {
+    id: 'ferryman_cargo',
+    title: 'Груз без имени',
+    description: 'Три запечатанных ящика унесло вдоль берега. Перевозчик не объясняет, что внутри.',
+    giver: 'ferryman',
+    category: 'side',
+    prerequisite: 'heart_of_ruin',
+    objectives: [
+      { type: 'collect', target: 'ferryman_cargo', label: 'Верните запечатанные ящики', amount: 3 },
+    ],
+    reward: { coins: 180, xp: 160, reputation: 1, items: [{ itemId: 'smoke_bomb', quantity: 2 }] },
+  },
+  {
+    id: 'lost_tools',
+    title: 'Последняя смена',
+    description: 'Брам оставил инструменты у обвалившегося штрека.',
+    giver: 'bram',
+    category: 'side',
+    prerequisite: 'blackwater_call',
+    objectives: [
+      { type: 'collect', target: 'miner_tools', label: 'Найдите инструменты Брама', amount: 1 },
+    ],
+    reward: { coins: 190, xp: 170, reputation: 1, items: [{ itemId: 'mine_ore', quantity: 4 }] },
+  },
+  {
+    id: 'bog_brew',
+    title: 'Дыхание топи',
+    description: 'Ведьма Ива варит средство от болотного яда и просит редкие светогрибы.',
+    giver: 'iva',
+    category: 'side',
+    prerequisite: 'heart_of_ruin',
+    objectives: [
+      { type: 'collect', target: 'glowcap', label: 'Соберите светогрибы', amount: 5 },
+    ],
+    reward: { coins: 160, xp: 150, reputation: 1, items: [{ itemId: 'greater_vial', quantity: 2 }] },
+  },
 ];
 
 export const BATTLE_PASS: BattlePassTier[] = [
@@ -193,42 +296,64 @@ export const BATTLE_PASS: BattlePassTier[] = [
   { tier: 6, reputation: 9, rewardLabel: 'Реликварий Бездны', weapon: 'reliquary' },
   { tier: 7, reputation: 11, rewardLabel: '250 золота', coins: 250 },
   { tier: 8, reputation: 12, rewardLabel: 'Печать Долины', coins: 400, potions: 3 },
+  { tier: 9, reputation: 14, rewardLabel: 'Серп Чёрной топи', weapon: 'bogreaper' },
+  { tier: 10, reputation: 16, rewardLabel: '350 золота', coins: 350 },
+  { tier: 11, reputation: 19, rewardLabel: '5 зелий крови', potions: 5 },
+  { tier: 12, reputation: 22, rewardLabel: 'Пепельное клеймо', weapon: 'cinderbrand' },
 ];
 
 export const ENEMIES: Record<string, EnemyDefinition> = {
   husk: {
     id: 'husk', name: 'Одичалый', health: 62, damage: 10, speed: 58, aggro: 210, rewardCoins: 8, tint: 0x9ca87c,
+    drops: [{ itemId: 'bone_shard', chance: .72, min: 1, max: 2 }],
   },
   boneguard: {
     id: 'boneguard', name: 'Костяной страж', health: 90, damage: 14, speed: 48, aggro: 240, rewardCoins: 14, tint: 0xd7c9aa,
+    drops: [{ itemId: 'bone_shard', chance: .9, min: 1, max: 3 }],
   },
   direwolf: {
     id: 'direwolf', name: 'Искажённый волк', health: 54, damage: 12, speed: 92, aggro: 260, rewardCoins: 11, tint: 0x7d708a,
+    drops: [{ itemId: 'wolf_pelt', chance: .62, min: 1, max: 1 }],
   },
   wraith: {
     id: 'wraith', name: 'Теневик', health: 74, damage: 16, speed: 72, aggro: 280, rewardCoins: 18, tint: 0x796aab,
+    drops: [{ itemId: 'ash_crystal', chance: .28, min: 1, max: 1 }],
+  },
+  bogling: {
+    id: 'bogling', name: 'Утопленник', health: 108, damage: 17, speed: 54, aggro: 300, rewardCoins: 22, tint: 0x4e8a75,
+    drops: [{ itemId: 'bog_reed', chance: .58, min: 1, max: 2 }],
+  },
+  cavecrawler: {
+    id: 'cavecrawler', name: 'Пещерная тварь', health: 126, damage: 19, speed: 86, aggro: 310, rewardCoins: 26, tint: 0x8b7159,
+    drops: [{ itemId: 'mine_ore', chance: .68, min: 1, max: 2 }],
+  },
+  ashborn: {
+    id: 'ashborn', name: 'Пеплорождённый', health: 154, damage: 23, speed: 66, aggro: 350, rewardCoins: 32, tint: 0xc35d47,
+    drops: [{ itemId: 'ash_crystal', chance: .7, min: 1, max: 2 }],
   },
   nameless: {
     id: 'nameless', name: 'Безымянная', health: 460, damage: 22, speed: 64, aggro: 420, rewardCoins: 100, tint: 0xb25987, scale: 1.45,
+    drops: [{ itemId: 'moon_charm', chance: 1, min: 1, max: 1 }],
+  },
+  cinderlord: {
+    id: 'cinderlord', name: 'Владыка углей', health: 760, damage: 30, speed: 70, aggro: 500, rewardCoins: 180, tint: 0xe06143, scale: 1.65,
+    drops: [{ itemId: 'cinder_plate', chance: 1, min: 1, max: 1 }],
   },
 };
 
 export const NPCS = [
   { id: 'mora', name: 'Сестра Мора', role: 'Хранительница клятвы', x: 660, y: 500, accent: 0xb78cff },
-  { id: 'runa', name: 'Руна', role: 'Кузнец и оружейник', x: 1010, y: 610, accent: 0xe3a560 },
+  { id: 'runa', name: 'Руна', role: 'Кузнец и оружейник', x: 1070, y: 640, accent: 0xe3a560 },
   { id: 'gran', name: 'Смотритель Гран', role: 'Страж кладбища', x: 1770, y: 690, accent: 0x9fc6b4 },
-  { id: 'vesna', name: 'Весна', role: 'Травница', x: 980, y: 1050, accent: 0x81c784 },
-  { id: 'elira', name: 'Элира', role: 'Вдова', x: 770, y: 740, accent: 0xd3a1b1 },
-  { id: 'orrin', name: 'Оррин', role: 'Охотник', x: 1450, y: 1250, accent: 0xc5a47e },
-  { id: 'ferryman', name: 'Перевозчик', role: 'Молчаливый проводник', x: 2240, y: 1240, accent: 0x88a7c2 },
+  { id: 'vesna', name: 'Весна', role: 'Травница', x: 980, y: 1080, accent: 0x81c784 },
+  { id: 'elira', name: 'Элира', role: 'Вдова', x: 770, y: 760, accent: 0xd3a1b1 },
+  { id: 'orrin', name: 'Оррин', role: 'Охотник', x: 1450, y: 1320, accent: 0xc5a47e },
+  { id: 'ferryman', name: 'Перевозчик', role: 'Молчаливый проводник', x: 3000, y: 2380, accent: 0x88a7c2 },
+  { id: 'iva', name: 'Ведьма Ива', role: 'Хозяйка Чёрной топи', x: 3190, y: 690, accent: 0x76c9a1 },
+  { id: 'bram', name: 'Брам', role: 'Последний шахтёр', x: 3460, y: 1450, accent: 0xc6a26d },
+  { id: 'serah', name: 'Капитан Сера', role: 'Дезертир цитадели', x: 3950, y: 2260, accent: 0xe47b68 },
 ] as const;
 
-export const LOCATIONS = [
-  { id: 'home', name: 'Дом изгнанника', x: 360, y: 320, w: 460, h: 390, color: 0x353745 },
-  { id: 'village', name: 'Деревня Серый Холм', x: 690, y: 340, w: 650, h: 570, color: 0x3d4039 },
-  { id: 'cemetery', name: 'Старое кладбище', x: 1480, y: 260, w: 720, h: 630, color: 0x30353a },
-  { id: 'forest', name: 'Шепчущий лес', x: 760, y: 930, w: 1050, h: 800, color: 0x263b35 },
-  { id: 'ruins', name: 'Проклятые руины', x: 1910, y: 900, w: 760, h: 760, color: 0x342a40 },
-] as const;
+export { LOCATIONS } from './world';
 
 export const XP_FOR_LEVEL = (level: number) => 100 + (level - 1) * 85;

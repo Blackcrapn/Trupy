@@ -263,7 +263,7 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
   .tutorial-tip { top: calc(8px + var(--safe-top)); width: min(290px, 52vw); padding: 8px 10px; }
   .tutorial-tip strong { font-size: 10px; }
   .tutorial-tip p { font-size: 7px; }
-  .interaction-prompt { bottom: calc(82px + var(--safe-bottom)); }
+  .interaction-prompt { bottom: calc(212px + var(--safe-bottom)); }
   .mobile-controls { position: absolute; inset: 0; display: block; pointer-events: none; }
   .joystick { position: absolute; left: calc(24px + var(--safe-left)); bottom: calc(28px + var(--safe-bottom)); width: 112px; height: 112px; pointer-events: auto; border: 3px solid rgba(180,176,194,.48); border-radius: 50%; background: rgba(13,15,23,.42); box-shadow: inset 0 0 20px #0006; touch-action: none; }
   .joystick::before, .joystick::after { content:''; position:absolute; background:#81839433; }
@@ -317,4 +317,114 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+/* Version 2: expanded world, inventory and audio */
+.mini-zone.home { left: 5%; top: 7%; width: 12%; height: 18%; }
+.mini-zone.village { left: 15%; top: 9%; width: 16%; height: 22%; }
+.mini-zone.cemetery { left: 32%; top: 7%; width: 18%; height: 24%; }
+.mini-zone.forest { left: 14%; top: 35%; width: 31%; height: 34%; }
+.mini-zone.ruins { left: 45%; top: 35%; width: 18%; height: 30%; }
+.mini-zone.marsh { left: 61%; top: 6%; width: 22%; height: 29%; background: #34584e; }
+.mini-zone.mines { left: 70%; top: 39%; width: 16%; height: 22%; background: #5a4e42; }
+.mini-zone.docks { left: 59%; top: 70%; width: 22%; height: 22%; background: #425765; }
+.mini-zone.citadel { left: 84%; top: 48%; width: 14%; height: 42%; background: #6a4049; }
+.mini-road.r1 { width: 64%; left: 12%; top: 28%; transform: rotate(8deg); }
+.mini-road.r2 { width: 54%; left: 31%; top: 49%; transform: rotate(22deg); }
+.mini-road.r3 { width: 37%; left: 61%; top: 66%; transform: rotate(-9deg); }
+
+.loot-banner { --loot-color:#e9b85e; position:absolute; right:calc(20px + var(--safe-right)); top:calc(178px + var(--safe-top)); min-width:260px; padding:10px 14px; display:grid; grid-template-columns:42px 1fr auto; align-items:center; gap:11px; background:linear-gradient(100deg,rgba(16,18,27,.98),rgba(28,25,35,.94)); border:2px solid var(--loot-color); box-shadow:5px 5px #0008,0 0 22px color-mix(in srgb,var(--loot-color) 18%,transparent); transform:translateX(35px); opacity:0; transition:opacity .2s,transform .25s; }
+.loot-banner.visible { opacity:1; transform:translateX(0); }
+.loot-banner > span { width:38px; height:38px; display:grid; place-items:center; background:#0c0e15; border:1px solid color-mix(in srgb,var(--loot-color) 70%,#555); color:var(--loot-color); font-size:22px; }
+.loot-banner div { display:grid; gap:3px; }
+.loot-banner small { color:#838694; font-size:7px; letter-spacing:.18em; }
+.loot-banner strong { font-size:10px; }
+.loot-banner > b { color:var(--loot-color); font:15px 'Russo One'; }
+.combo-banner { position:absolute; left:50%; top:calc(142px + var(--safe-top)); transform:translate(-50%,-10px) scale(.92); display:flex; align-items:center; gap:9px; padding:7px 13px; background:rgba(13,15,23,.9); border:2px solid #8e6379; box-shadow:4px 4px #0007; opacity:0; transition:opacity .16s,transform .16s; }
+.combo-banner.visible { opacity:1; transform:translate(-50%,0) scale(1); }
+.combo-banner.hot { border-color:#e19758; box-shadow:4px 4px #0007,0 0 18px #db694b44; }
+.combo-banner > strong { color:#e09ab2; font:28px 'Russo One'; line-height:1; }
+.combo-banner.hot > strong { color:#ffb064; }
+.combo-banner div { display:grid; gap:2px; }
+.combo-banner span { color:#878995; font-size:7px; letter-spacing:.16em; }
+.combo-banner b { color:#e8dbe2; font-size:9px; }
+
+.inventory-layout { display:grid; grid-template-columns:230px minmax(0,1fr); gap:18px; min-height:100%; }
+.equipment-paperdoll { position:sticky; top:0; align-self:start; padding:17px; background:linear-gradient(160deg,#1d1b29,#12141d); border:2px solid #454858; box-shadow:inset 0 0 35px #0004; }
+.paperdoll-silhouette { height:135px; margin:12px 0; display:grid; place-items:center; color:#bc829d; background:radial-gradient(circle,#6e405633,transparent 65%),#0e1017; border:1px solid #3e414e; font:72px 'Russo One'; text-shadow:0 0 28px #a14f70; }
+.equipment-slot { margin-top:8px; padding:9px; display:grid; gap:4px; background:#10121a; border:1px solid #3c3f4d; }
+.equipment-slot small { color:#858794; font-size:7px; letter-spacing:.13em; }
+.equipment-slot b { font-size:9px; color:#dbd7df; }
+.equipment-stats { display:grid; gap:5px; margin-top:12px; padding-top:10px; border-top:1px solid #363945; }
+.equipment-stats span { display:flex; justify-content:space-between; color:#9799a6; font-size:8px; }
+.equipment-stats b { color:#e6bc70; }
+.inventory-bag { min-width:0; }
+.bag-meta { display:flex; gap:8px; flex-wrap:wrap; }
+.bag-meta span { padding:7px 10px; color:#d6b86f; background:#0e1017; border:1px solid #474a57; font-size:8px; }
+.inventory-section-title { margin:18px 0 9px; color:#bbb6c3; font:11px 'Russo One'; letter-spacing:.08em; text-transform:uppercase; }
+.inventory-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+.inventory-grid.weapons { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.inventory-grid.compact { grid-template-columns:1fr; max-height:480px; overflow:auto; padding-right:4px; }
+.inventory-item { --rarity:#a9adb8; min-height:116px; padding:10px; display:grid; grid-template-columns:52px minmax(0,1fr); grid-template-rows:1fr auto; gap:8px 10px; background:linear-gradient(145deg,#181a24,#11131b); border:1px solid #3c3f4d; border-left:4px solid var(--rarity); box-shadow:inset 0 0 24px #0003; }
+.inventory-item.equipped { box-shadow:inset 0 0 24px color-mix(in srgb,var(--rarity) 14%,transparent),0 0 0 1px var(--rarity); }
+.item-icon { position:relative; grid-row:1/3; width:52px; height:52px; display:grid; place-items:center; color:var(--rarity); background:#0c0e15; border:1px solid color-mix(in srgb,var(--rarity) 65%,#444); font-size:25px; text-shadow:0 0 12px color-mix(in srgb,var(--rarity) 55%,transparent); }
+.item-icon em { position:absolute; right:3px; bottom:2px; min-width:15px; height:15px; display:grid; place-items:center; background:#e7e3ea; color:#12141b; border-radius:50%; font:normal 8px 'Roboto Mono'; }
+.item-copy { min-width:0; }
+.item-copy small { color:var(--rarity); font-size:7px; letter-spacing:.08em; }
+.item-copy b { display:block; margin:4px 0; font:10px 'Russo One'; }
+.item-copy p { margin:0; color:#9695a2; font-size:7px; line-height:1.45; }
+.item-actions { grid-column:2; display:flex; gap:5px; flex-wrap:wrap; }
+.inventory-item button { min-height:28px; padding:5px 9px; background:#764257; border:1px solid #a96881; color:#eee8ef; font-size:7px; font-weight:700; }
+.inventory-item button.subtle { background:#242733; border-color:#454957; color:#aaaab5; }
+.inventory-item button:disabled { background:#242630; border-color:#363944; color:#747681; }
+.weapon-item { min-height:132px; }
+
+.chest-layout { display:grid; grid-template-columns:minmax(0,1fr) 48px minmax(0,1fr); gap:13px; }
+.chest-layout section { min-width:0; padding:14px; background:#141620; border:2px solid #3e414e; }
+.chest-layout h3 { margin:5px 0 14px; font:15px 'Russo One'; }
+.chest-divider { align-self:center; width:42px; height:42px; display:grid; place-items:center; color:#d7b269; background:#191b26; border:2px solid #575a68; font-size:20px; }
+
+.audio-settings { padding:18px; background:#151720; border:2px solid #3c3f4d; }
+.audio-settings h3 { margin:0 0 14px; font:14px 'Russo One'; }
+.volume-row { display:grid; gap:6px; margin:11px 0; }
+.volume-row span { display:flex; justify-content:space-between; color:#aaa8b3; font-size:8px; }
+.volume-row b { color:#d7b36c; }
+.volume-row input { width:100%; accent-color:#a84e6b; }
+.audio-settings button { width:100%; min-height:34px; margin-top:9px; background:#292b37; border:2px solid #4e5160; color:#bbb9c5; font-size:8px; }
+.pause-layout.v2 { grid-template-columns:1.1fr 1fr .85fr .8fr; }
+
+.world-map.expanded .map-zone.home { left:5%; top:6%; width:12%; height:17%; }
+.world-map.expanded .map-zone.village { left:15%; top:8%; width:16%; height:23%; }
+.world-map.expanded .map-zone.cemetery { left:33%; top:6%; width:18%; height:24%; }
+.world-map.expanded .map-zone.forest { left:14%; top:35%; width:31%; height:34%; }
+.world-map.expanded .map-zone.ruins { left:45%; top:35%; width:18%; height:30%; }
+.world-map.expanded .map-zone.marsh { left:61%; top:5%; width:22%; height:30%; background:#31564c; border-color:#6c8d7e; }
+.world-map.expanded .map-zone.mines { left:70%; top:39%; width:16%; height:23%; background:#594d41; }
+.world-map.expanded .map-zone.docks { left:59%; top:70%; width:22%; height:23%; background:#405564; }
+.world-map.expanded .map-zone.citadel { left:84%; top:47%; width:14%; height:44%; background:#613d46; border-color:#9b5d68; }
+.map-zone.undiscovered { filter:grayscale(1) brightness(.45); border-style:dashed; }
+.map-road.road-c { left:59%; top:63%; width:39%; transform:rotate(-8deg); }
+
+.quality-low .hud-card, .quality-low .panel-backdrop { backdrop-filter:none; }
+
+@media (max-width:850px), (pointer:coarse) {
+  .loot-banner { top:calc(190px + var(--safe-top)); right:calc(8px + var(--safe-right)); min-width:210px; padding:7px 9px; }
+  .inventory-layout { grid-template-columns:1fr; }
+  .equipment-paperdoll { position:static; display:grid; grid-template-columns:80px 1fr 1fr; gap:7px; }
+  .equipment-paperdoll > .eyebrow,.equipment-stats { grid-column:1/-1; }
+  .paperdoll-silhouette { grid-row:2/4; height:102px; margin:0; font-size:45px; }
+  .equipment-slot { margin:0; }
+  .inventory-grid,.inventory-grid.weapons { grid-template-columns:1fr; }
+  .pause-layout.v2 { grid-template-columns:1fr 1fr; }
+  .chest-layout { grid-template-columns:1fr; }
+  .chest-divider { transform:rotate(90deg); justify-self:center; }
+}
+
+@media (max-width:520px) {
+  .loot-banner { top:calc(278px + var(--safe-top)); min-width:190px; }
+  .equipment-paperdoll { grid-template-columns:70px 1fr; }
+  .equipment-slot { grid-column:2; }
+  .inventory-item { grid-template-columns:45px minmax(0,1fr); }
+  .item-icon { width:45px; height:45px; }
+  .pause-layout.v2 { grid-template-columns:1fr; }
 }

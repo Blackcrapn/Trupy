@@ -1,6 +1,7 @@
 import { QUESTS } from '../data/content';
 import type { ObjectiveType, PlayerSave, QuestDefinition, QuestProgress, QuestStatus } from '../game/types';
 import { XP_FOR_LEVEL } from '../data/content';
+import { addStack, stackQuantity } from '../data/items';
 import type { SaveSystem } from './SaveSystem';
 
 export interface QuestUpdate {
@@ -50,7 +51,9 @@ export class QuestSystem {
       save.coins += quest.reward.coins;
       save.xp += quest.reward.xp;
       save.reputation += quest.reward.reputation;
-      save.potions += quest.reward.potions ?? 0;
+      if (quest.reward.potions) save.inventory = addStack(save.inventory, 'blood_vial', quest.reward.potions);
+      for (const reward of quest.reward.items ?? []) save.inventory = addStack(save.inventory, reward.itemId, reward.quantity);
+      save.potions = stackQuantity(save.inventory, 'blood_vial');
       while (save.xp >= XP_FOR_LEVEL(save.level)) {
         save.xp -= XP_FOR_LEVEL(save.level);
         save.level += 1;
