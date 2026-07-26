@@ -285,6 +285,53 @@ export const QUESTS: QuestDefinition[] = [
     ],
     reward: { coins: 160, xp: 150, reputation: 1, items: [{ itemId: 'greater_vial', quantity: 2 }] },
   },
+  // --- Orrin the hunter gets his own early side-quest chain entry. It funnels
+  // wolf pelts (a crafting material) to the player and puts the otherwise
+  // quest-less Teneviki (wraith) on a kill list. Gated behind the intro so it
+  // slots into the same early window as wolf_debt. ---
+  {
+    id: 'hunters_bounty',
+    title: 'Охотничья доля',
+    description: 'Оррин промышляет в лесу и делит добычу с тем, кто расчистит его тропы от теневиков.',
+    giver: 'orrin',
+    category: 'side',
+    prerequisite: 'first_oath',
+    objectives: [
+      { type: 'kill', target: 'wraith', label: 'Развейте теневиков на тропах Оррина', amount: 4 },
+      { type: 'collect', target: 'wolf_pelt', label: 'Принесите волчьи шкуры для дележа', amount: 3 },
+    ],
+    reward: { coins: 130, xp: 120, reputation: 1, items: [{ itemId: 'wolf_pelt', quantity: 3 }, { itemId: 'bog_reed', quantity: 2 }] },
+  },
+  // --- Serah, the citadel deserter, opens post-game content. The main chain
+  // ends at ash_crown; this picks up after it. It's the only quest that
+  // consumes the citadel_seal item (previously unused). Narratively she knows a
+  // second seal survived the fall and sends the player back into the ashes. ---
+  {
+    id: 'sealed_gate',
+    title: 'Вторая печать',
+    description: 'Капитан Сера бежала из цитадели не с пустыми руками. Она уверена: под пеплом уцелела вторая печать, и её нужно вынести, пока Пеплорождённые не собрались вновь.',
+    giver: 'serah',
+    category: 'side',
+    prerequisite: 'ash_crown',
+    objectives: [
+      { type: 'kill', target: 'ashborn', label: 'Пробейтесь через Пеплорождённых', amount: 5 },
+      { type: 'collect', target: 'citadel_seal', label: 'Вынесите уцелевшую печать цитадели', amount: 1 },
+    ],
+    reward: { coins: 300, xp: 320, reputation: 2, items: [{ itemId: 'ash_crystal', quantity: 3 }, { itemId: 'greater_vial', quantity: 2 }] },
+  },
+  {
+    id: 'ashen_reckoning',
+    title: 'Расплата пеплом',
+    description: 'С печатью в руках Сера решается на то, ради чего дезертировала: закрыть разлом изнутри. Прикройте её последний рейд по выжженным залам.',
+    giver: 'serah',
+    category: 'side',
+    prerequisite: 'sealed_gate',
+    objectives: [
+      { type: 'kill', target: 'ashborn', label: 'Сдержите Пеплорождённых у разлома', amount: 6 },
+      { type: 'kill', target: 'wraith', label: 'Развейте теневиков в горящих залах', amount: 4 },
+    ],
+    reward: { coins: 380, xp: 420, reputation: 2, items: [{ itemId: 'cinder_plate', quantity: 1 }] },
+  },
 ];
 
 export const BATTLE_PASS: BattlePassTier[] = [
@@ -302,42 +349,75 @@ export const BATTLE_PASS: BattlePassTier[] = [
   { tier: 12, reputation: 22, rewardLabel: 'Пепельное клеймо', weapon: 'cinderbrand' },
 ];
 
+// Loot tables use a two-tier shape per enemy: a high-chance *common* material
+// so materials flow reliably, plus a low-chance *rare* roll (a scarcer material
+// or a consumable) so rare drops actually feel rare. Each drop is rolled
+// independently. Every itemId here exists in items.ts (checked by data.test).
+// Bosses keep their guaranteed signature drop and gain a small material bonus.
 export const ENEMIES: Record<string, EnemyDefinition> = {
   husk: {
     id: 'husk', name: 'Одичалый', health: 62, damage: 10, speed: 58, aggro: 210, rewardCoins: 8, tint: 0x9ca87c,
-    drops: [{ itemId: 'bone_shard', chance: .72, min: 1, max: 2 }],
+    drops: [
+      { itemId: 'bone_shard', chance: .72, min: 1, max: 2 },
+      { itemId: 'glowcap', chance: .05, min: 1, max: 1 }, // rare forage off a wanderer
+    ],
   },
   boneguard: {
     id: 'boneguard', name: 'Костяной страж', health: 90, damage: 14, speed: 48, aggro: 240, rewardCoins: 14, tint: 0xd7c9aa,
-    drops: [{ itemId: 'bone_shard', chance: .9, min: 1, max: 3 }],
+    drops: [
+      { itemId: 'bone_shard', chance: .9, min: 1, max: 3 },
+      { itemId: 'mine_ore', chance: .12, min: 1, max: 1 }, // shards of old armour
+    ],
   },
   direwolf: {
     id: 'direwolf', name: 'Искажённый волк', health: 54, damage: 12, speed: 92, aggro: 260, rewardCoins: 11, tint: 0x7d708a,
-    drops: [{ itemId: 'wolf_pelt', chance: .62, min: 1, max: 1 }],
+    drops: [
+      { itemId: 'wolf_pelt', chance: .62, min: 1, max: 1 },
+      { itemId: 'bone_shard', chance: .3, min: 1, max: 1 },
+    ],
   },
   wraith: {
     id: 'wraith', name: 'Теневик', health: 74, damage: 16, speed: 72, aggro: 280, rewardCoins: 18, tint: 0x796aab,
-    drops: [{ itemId: 'ash_crystal', chance: .28, min: 1, max: 1 }],
+    drops: [
+      { itemId: 'ash_crystal', chance: .28, min: 1, max: 1 },
+      { itemId: 'glowcap', chance: .1, min: 1, max: 1 },
+    ],
   },
   bogling: {
     id: 'bogling', name: 'Утопленник', health: 108, damage: 17, speed: 54, aggro: 300, rewardCoins: 22, tint: 0x4e8a75,
-    drops: [{ itemId: 'bog_reed', chance: .58, min: 1, max: 2 }],
+    drops: [
+      { itemId: 'bog_reed', chance: .58, min: 1, max: 2 },
+      { itemId: 'glowcap', chance: .18, min: 1, max: 1 },
+    ],
   },
   cavecrawler: {
     id: 'cavecrawler', name: 'Пещерная тварь', health: 126, damage: 19, speed: 86, aggro: 310, rewardCoins: 26, tint: 0x8b7159,
-    drops: [{ itemId: 'mine_ore', chance: .68, min: 1, max: 2 }],
+    drops: [
+      { itemId: 'mine_ore', chance: .68, min: 1, max: 2 },
+      { itemId: 'ash_crystal', chance: .1, min: 1, max: 1 },
+    ],
   },
   ashborn: {
     id: 'ashborn', name: 'Пеплорождённый', health: 154, damage: 23, speed: 66, aggro: 350, rewardCoins: 32, tint: 0xc35d47,
-    drops: [{ itemId: 'ash_crystal', chance: .7, min: 1, max: 2 }],
+    drops: [
+      { itemId: 'ash_crystal', chance: .7, min: 1, max: 2 },
+      { itemId: 'glowcap', chance: .12, min: 1, max: 1 },
+      { itemId: 'blood_vial', chance: .15, min: 1, max: 1 }, // rare heal off a hot kill
+    ],
   },
   nameless: {
     id: 'nameless', name: 'Безымянная', health: 460, damage: 22, speed: 64, aggro: 420, rewardCoins: 100, tint: 0xb25987, scale: 1.45,
-    drops: [{ itemId: 'moon_charm', chance: 1, min: 1, max: 1 }],
+    drops: [
+      { itemId: 'moon_charm', chance: 1, min: 1, max: 1 },
+      { itemId: 'glowcap', chance: .5, min: 1, max: 2 }, // boss material bonus
+    ],
   },
   cinderlord: {
     id: 'cinderlord', name: 'Владыка углей', health: 760, damage: 30, speed: 70, aggro: 500, rewardCoins: 180, tint: 0xe06143, scale: 1.65,
-    drops: [{ itemId: 'cinder_plate', chance: 1, min: 1, max: 1 }],
+    drops: [
+      { itemId: 'cinder_plate', chance: 1, min: 1, max: 1 },
+      { itemId: 'ash_crystal', chance: .6, min: 2, max: 3 }, // boss material bonus
+    ],
   },
 };
 

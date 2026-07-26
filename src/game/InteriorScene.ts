@@ -7,6 +7,10 @@ import { InventorySystem } from '../systems/InventorySystem';
 import { QuestSystem } from '../systems/QuestSystem';
 import { SaveSystem } from '../systems/SaveSystem';
 import { WeaponShopSystem } from '../systems/WeaponShopSystem';
+import { CraftingSystem } from '../systems/CraftingSystem';
+import { detonateSmokeBomb } from '../systems/combat/SmokeBomb';
+import { LightingSystem, FLAME_LIGHT, FORGE_LIGHT } from '../systems/world/Lighting';
+import { HERO_DIRS, heroKey, type HeroDir, type HeroPose } from '../systems/sprites/hero';
 import { GameUI } from '../ui/GameUI';
 import { GameEvents } from './events';
 import type { HudSnapshot, PlayerSave } from './types';
@@ -22,7 +26,9 @@ export class InteriorScene extends Phaser.Scene {
   private inventory!: InventorySystem;
   private shop!: WeaponShopSystem;
   private quests!: QuestSystem;
+  private crafting!: CraftingSystem;
   private ui!: GameUI;
+  private lighting!: LightingSystem;
   private definition!: InteriorDefinition;
   private player!: Phaser.Physics.Arcade.Sprite;
   private heldWeapon!: Phaser.GameObjects.Image;
@@ -30,12 +36,19 @@ export class InteriorScene extends Phaser.Scene {
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private mobileMove = new Phaser.Math.Vector2();
   private facing = new Phaser.Math.Vector2(0, -1);
+  private heroDir: HeroDir = 'down';
+  private heroPose: HeroPose = 'idle';
+  private heroPoseUntil = 0;
+  /** The anvil in Runa's forge, if this interior is the forge. */
+  private anvil?: Phaser.GameObjects.Image;
+  /** Hearth/candle light sources collected while dressing, lit in createLighting. */
+  private lightSources: Array<{ x: number; y: number; radius: number; preset: typeof FLAME_LIGHT | typeof FORGE_LIGHT; intensity?: number }> = [];
   private returnPoint = { x: 430, y: 585 };
   private uiLocked = false;
   private chest?: Phaser.GameObjects.Image;
   private exitDoor!: Phaser.GameObjects.Rectangle;
   private npc?: Phaser.GameObjects.Sprite;
-  private prompt: 'exit' | 'chest' | 'npc' | undefined;
+  private prompt: 'exit' | 'chest' | 'npc' | 'anvil' | undefined;
   private lastStepAt = 0;
   private dashReadyAt = 0;
   private specialReadyAt = 0;
@@ -54,11 +67,13 @@ export class InteriorScene extends Phaser.Scene {
     this.inventory = new InventorySystem(this.saves);
     this.shop = new WeaponShopSystem(this.saves);
     this.quests = new QuestSystem(this.saves);
+    this.crafting = new CraftingSystem(this.saves, this.inventory);
     this.saves.mutate((save) => { save.currentScene = this.definition.id; }, true);
     audio.setMix(this.audioMix(this.saves.get()));
     audio.setRegion('interior', false);
     this.physics.world.setBounds(0, 0, this.definition.width, this.definition.height);
     this.drawRoom();
+    this.createLighting();
     this.createPlayer();
     this.createResident();
     this.setupInput();
@@ -70,16 +85,21 @@ export class InteriorScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.cleanup());
   }
 
-  update(time: number): void {
+  update(time: number, delta: number): void {
     this.updatePlayer(time);
     this.updatePrompt();
     GameEvents.emit('ability-cooldown', { dash: Math.max(0, (this.dashReadyAt - time) / 1000), special: Math.max(0, (this.specialReadyAt - time) / 1000) });
     this.player.setDepth(this.player.y / 10 + 20);
+    // Drive the hearth/candle flicker. The day length is set enormous in
+    // createLighting so the fixed dim tint barely drifts over an interior visit —
+    // the room is lit by its light sources, not a day/night cycle.
+    this.lighting?.update(delta);
     this.syncHeldWeapon();
   }
 
   private drawRoom(): void {
-    const { width, height, floor, wall, accent, ambience } = this.definition;
+    const { width, height, floor, wall, accent } = this.definition;
+    this.lightSources = [];
     const room = this.add.graphics();
     room.fillStyle(0x090b11, 1).fillRect(0, 0, width, height);
     room.fillStyle(wall, 1).fillRoundedRect(42, 36, width - 84, height - 72, 12);
@@ -87,34 +107,13 @@ export class InteriorScene extends Phaser.Scene {
     room.lineStyle(5, 0x15161d, 1).strokeRect(78, 84, width - 156, height - 156);
     for (let y = 96; y < height - 80; y += 34) room.lineStyle(2, 0x191a22, .35).lineBetween(80, y, width - 80, y);
     for (let x = 95; x < width - 80; x += 70) room.lineStyle(1, 0x747078, .09).lineBetween(x, 88, x, height - 78);
-    room.fillStyle(accent, .18).fillRoundedRect(width / 2 - 150, height / 2 - 90, 300, 180, 8);
-    room.lineStyle(3, accent, .35).strokeRoundedRect(width / 2 - 150, height / 2 - 90, 300, 180, 8);
+    // Exit doorway at the bottom-centre.
     room.fillStyle(0x171821, 1).fillRect(width / 2 - 38, height - 100, 76, 25);
     room.fillStyle(accent, .55).fillRect(width / 2 - 29, height - 98, 58, 5);
     this.exitDoor = this.add.rectangle(width / 2, height - 92, 84, 42, accent, .08).setStrokeStyle(2, accent, .7).setDepth(8);
 
-    const furniture = this.add.graphics().setDepth(8);
-    const table = (x: number, y: number, w: number, h: number) => {
-      furniture.fillStyle(0x171821, 1).fillRect(x - w / 2 - 3, y - h / 2 + 5, w + 6, h + 5);
-      furniture.fillStyle(0x6c4c38, 1).fillRect(x - w / 2, y - h / 2, w, h);
-      furniture.lineStyle(2, 0x9b7048, .7).strokeRect(x - w / 2, y - h / 2, w, h);
-    };
-    const bed = (x: number, y: number) => {
-      furniture.fillStyle(0x171821, 1).fillRect(x - 44, y - 26, 88, 52);
-      furniture.fillStyle(0x664458, 1).fillRect(x - 40, y - 22, 80, 44);
-      furniture.fillStyle(0xc6b9a8, 1).fillRect(x - 36, y - 18, 25, 16);
-      furniture.fillStyle(0x8d5970, 1).fillRect(x - 8, y - 18, 44, 36);
-    };
-    table(235, 220, 130, 64);
-    table(width - 215, 230, 110, 58);
-    if (ambience === 'home' || ambience === 'house' || ambience === 'inn') bed(205, height - 205);
-    if (ambience === 'inn') { table(width / 2, 210, 150, 70); table(width / 2 + 220, height - 210, 120, 55); }
-    if (ambience === 'forge') this.drawForge(furniture, width - 190, height - 210);
-    if (ambience === 'herbalist') this.drawShelves(furniture, width - 165, height / 2);
-    if (ambience === 'chapel') this.drawChapel(furniture, width, height);
-    if (ambience === 'marsh') this.drawMarshInterior(furniture, width, height);
-    if (ambience === 'warehouse') this.drawWarehouse(furniture, width, height);
-    if (ambience === 'citadel') this.drawCitadelInterior(furniture, width, height);
+    // Recognisable dressing per interior, built from the sculpted prop sprites.
+    this.dressRoom();
 
     this.add.text(width / 2, 54, this.definition.name.toUpperCase(), {
       fontFamily: 'monospace', fontSize: '16px', fontStyle: 'bold', color: '#d8d3dc', stroke: '#101119', strokeThickness: 5, letterSpacing: 4,
@@ -127,78 +126,271 @@ export class InteriorScene extends Phaser.Scene {
     this.createInteriorParticles();
   }
 
-  private drawForge(graphics: Phaser.GameObjects.Graphics, x: number, y: number): void {
-    graphics.fillStyle(0x171821, 1).fillRect(x - 70, y - 55, 140, 110);
-    graphics.fillStyle(0x4d3430, 1).fillRect(x - 62, y - 47, 124, 94);
-    graphics.fillStyle(0xff633d, .85).fillCircle(x, y + 12, 38);
-    graphics.fillStyle(0xffcf67, .9).fillCircle(x, y + 18, 20);
-    for (let index = 0; index < 9; index += 1) {
-      const ember = this.add.image(x + Phaser.Math.Between(-35, 35), y + Phaser.Math.Between(-5, 25), 'ember').setDepth(30).setScale(1.4);
-      this.tweens.add({ targets: ember, y: ember.y - Phaser.Math.Between(45, 90), x: ember.x + Phaser.Math.Between(-18, 18), alpha: 0, duration: Phaser.Math.Between(900, 1800), repeat: -1, delay: index * 120 });
+  /** Depth-sorted prop placement helper. */
+  private prop(x: number, y: number, key: string, scale = 2, depthBias = 6): Phaser.GameObjects.Image {
+    return this.add.image(x, y, key).setScale(scale).setDepth(y / 10 + depthBias);
+  }
+
+  /** Register a warm light emitter to be lit in createLighting. */
+  private addHearth(x: number, y: number, radius: number, forge = false, intensity?: number): void {
+    this.lightSources.push({ x, y, radius, preset: forge ? FORGE_LIGHT : FLAME_LIGHT, intensity });
+  }
+
+  /**
+   * Dresses the room according to its `ambience`, giving each interior a distinct
+   * identity out of the sculpted prop textures. Every branch also seeds the
+   * `lightSources` list with its hearth/candles so createLighting can make the
+   * room feel lit from within.
+   */
+  private dressRoom(): void {
+    const { width, height, ambience } = this.definition;
+    // Wall torches flanking the exit door read as a lit threshold in every room.
+    this.prop(width / 2 - 150, height - 96, 'torch-wall', 2, 8);
+    this.prop(width / 2 + 150, height - 96, 'torch-wall', 2, 8);
+    this.addHearth(width / 2 - 150, height - 104, 92, false, 0.5);
+    this.addHearth(width / 2 + 150, height - 104, 92, false, 0.5);
+
+    switch (ambience) {
+      case 'home': this.dressHome(); break;
+      case 'inn': this.dressInn(); break;
+      case 'forge': this.dressForge(); break;
+      case 'herbalist': this.dressHerbalist(); break;
+      case 'house': this.dressHouse(); break;
+      case 'chapel': this.dressChapel(); break;
+      case 'marsh': this.dressMarsh(); break;
+      case 'warehouse': this.dressWarehouse(); break;
+      case 'citadel': this.dressCitadel(); break;
     }
   }
 
-  private drawShelves(graphics: Phaser.GameObjects.Graphics, x: number, y: number): void {
-    graphics.fillStyle(0x171821, 1).fillRect(x - 75, y - 150, 150, 300);
-    graphics.fillStyle(0x594737, 1).fillRect(x - 68, y - 143, 136, 286);
-    for (let row = -105; row <= 105; row += 70) {
-      graphics.fillStyle(0x2b352c, 1).fillRect(x - 58, y + row, 116, 8);
-      for (let bottle = -42; bottle <= 42; bottle += 28) {
-        graphics.fillStyle([0x79b87a, 0x9c70b5, 0xc58a55][Math.abs(bottle / 28) % 3], 1).fillRect(x + bottle - 6, y + row - 22, 12, 20);
-      }
-    }
+  /** A modest cottage: bed, hearth brazier, a barrel and crate. */
+  private dressHome(): void {
+    const { width, height } = this.definition;
+    this.drawBed(205, height - 200);
+    this.prop(width - 170, height - 175, 'barrel', 2.1);
+    this.prop(width - 235, height - 165, 'crate', 2);
+    this.prop(230, 200, 'brazier-lit', 2.1);
+    this.addHearth(230, 190, 150, false, 0.7);
+    this.prop(width - 200, 195, 'sack', 2);
   }
 
-  private drawChapel(graphics: Phaser.GameObjects.Graphics, width: number, height: number): void {
+  /** The inn: long tables, benches implied by stools, barrels of ale, a hearth. */
+  private dressInn(): void {
+    const { width, height } = this.definition;
+    this.drawBed(200, height - 195);
+    this.drawTable(width / 2, 220, 3);
+    this.drawTable(width / 2 + 210, height - 205, 2);
+    this.prop(width - 175, 200, 'barrel', 2.2);
+    this.prop(width - 230, 215, 'barrel', 2);
+    this.prop(150, 210, 'brazier-lit', 2.1);
+    this.addHearth(150, 200, 155, false, 0.72);
+    this.prop(width - 150, height - 200, 'crate', 2);
+  }
+
+  /** Runa's forge: the anvil (interactable), roaring forge fire, crates of ore. */
+  private dressForge(): void {
+    const { width, height } = this.definition;
+    // The forge fire against the back wall — the hot heart of the room.
+    this.prop(width - 200, 210, 'forge-fire', 2.3);
+    this.addHearth(width - 200, 205, 235, true, 0.9);
+    this.emberFountain(width - 200, 215);
+    // Braziers throwing extra heat.
+    this.prop(160, 220, 'brazier-lit', 2.1);
+    this.addHearth(160, 210, 150, true, 0.7);
+    // The anvil, front-and-centre and interactable to open crafting.
+    this.anvil = this.prop(width / 2 - 30, height / 2 + 30, 'anvil', 2.6, 10);
+    // Materials around the workspace.
+    this.prop(width / 2 + 150, height / 2 + 70, 'crate', 2.1);
+    this.prop(width / 2 + 210, height / 2 + 40, 'ore-vein', 2);
+    this.prop(width - 150, height - 175, 'barrel', 2.1);
+    this.prop(220, height - 175, 'crate', 2);
+  }
+
+  /** The herbalist: shelves of bottles, hanging herbs, a glowing cap or two. */
+  private dressHerbalist(): void {
+    const { width, height } = this.definition;
+    this.drawShelf(width - 160, 175);
+    this.drawShelf(width - 160, height - 210);
+    this.drawTable(280, height / 2, 2);
+    this.prop(200, 200, 'mushroom-cluster', 2.2);
+    this.prop(width / 2, height - 165, 'glowcap', 2.4);
+    this.addHearth(width / 2, height - 168, 120, false, 0.55);
+    this.prop(width / 2 + 70, height - 175, 'glowcap', 2);
+    this.addHearth(width / 2 + 70, height - 178, 100, false, 0.5);
+    this.prop(230, 210, 'sack', 1.9);
+    this.prop(width - 250, height / 2 + 40, 'barrel', 2);
+  }
+
+  /** Elira's house: a tidy home — bed, table, a candle brazier, a keepsake charm. */
+  private dressHouse(): void {
+    const { width, height } = this.definition;
+    this.drawBed(205, height - 190);
+    this.drawTable(width - 230, 210, 2);
+    this.prop(200, 205, 'brazier-lit', 2);
+    this.addHearth(200, 197, 145, false, 0.68);
+    this.prop(width - 175, height - 175, 'crate', 1.9);
+    this.prop(width / 2 + 40, height / 2 + 20, 'charm', 2.4, 10);
+    this.prop(width - 260, height - 185, 'sack', 1.9);
+  }
+
+  /** Chapel + crypt: pews (benches), a shrine altar, cold candle braziers. */
+  private dressChapel(): void {
+    const { width, height } = this.definition;
+    // Pews down the nave.
     for (let row = 0; row < 3; row += 1) {
-      const y = 200 + row * 105;
-      graphics.fillStyle(0x171821, 1).fillRect(210, y, width - 420, 25);
-      graphics.fillStyle(0x514a50, 1).fillRect(220, y - 5, width - 440, 20);
+      const y = 210 + row * 120;
+      this.drawBench(width / 2 - 130, y);
+      this.drawBench(width / 2 + 130, y);
     }
-    graphics.fillStyle(0x171821, 1).fillRect(width / 2 - 55, 105, 110, 80);
-    graphics.fillStyle(0x756682, 1).fillRect(width / 2 - 48, 112, 96, 66);
-    graphics.fillStyle(0xb59ac4, 1).fillRect(width / 2 - 4, 120, 8, 48);
-    graphics.fillRect(width / 2 - 24, 135, 48, 8);
+    // The altar at the head of the chapel.
+    this.prop(width / 2, 150, 'altar', 2.2, 12);
+    this.addHearth(width / 2, 150, 150, false, 0.55);
+    // Candle braziers flanking it.
+    this.prop(width / 2 - 150, 165, 'brazier-lit', 1.9);
+    this.prop(width / 2 + 150, 165, 'brazier-lit', 1.9);
+    this.addHearth(width / 2 - 150, 158, 120, false, 0.6);
+    this.addHearth(width / 2 + 150, 158, 120, false, 0.6);
+    // A hint of the crypt below: bones and a skull in a corner.
+    this.prop(150, height - 165, 'bones', 2);
+    this.prop(200, height - 150, 'skull', 2);
   }
 
-  private drawMarshInterior(graphics: Phaser.GameObjects.Graphics, width: number, height: number): void {
-    graphics.fillStyle(0x171821, 1).fillCircle(width / 2 + 190, height / 2, 72);
-    graphics.fillStyle(0x446f5c, 1).fillCircle(width / 2 + 190, height / 2 + 4, 62);
-    graphics.fillStyle(0x78c99b, .8).fillCircle(width / 2 + 190, height / 2 + 8, 38);
-    for (let index = 0; index < 7; index += 1) {
-      const x = 120 + index * 72;
-      graphics.fillStyle(index % 2 ? 0x7ec18c : 0x9c75b2, 1).fillRect(x, 115, 12, 28);
-      graphics.fillStyle(0x4c3b2f, 1).fillRect(x - 5, 141, 22, 8);
+  /** Marsh hut (Iva): a still/cauldron feel — barrels, reeds, bog bottles, brew. */
+  private dressMarsh(): void {
+    const { width, height } = this.definition;
+    this.drawShelf(width - 160, height / 2);
+    this.drawTable(260, height - 200, 2);
+    this.prop(200, 200, 'brazier-lit', 2);
+    this.addHearth(200, 192, 150, false, 0.68);
+    // Reeds and marsh flora brought indoors.
+    for (let index = 0; index < 4; index += 1) {
+      this.prop(150 + index * 60, 150, 'reeds', 1.8, 7);
+    }
+    this.prop(width / 2 + 40, height / 2 + 40, 'mushroom-cluster', 2.1);
+    this.prop(width - 250, height - 180, 'barrel', 2);
+    this.prop(width / 2 + 150, height - 170, 'glowcap', 2.1);
+    this.addHearth(width / 2 + 150, height - 173, 95, false, 0.45);
+  }
+
+  /** Dock warehouse: stacked crates, barrels, sacks, coils of chain. */
+  private dressWarehouse(): void {
+    const { width, height } = this.definition;
+    // Rows of stacked crates and barrels.
+    const layout: Array<[number, number, string]> = [
+      [180, 180, 'crate'], [250, 195, 'barrel'], [320, 180, 'crate'],
+      [width - 320, 185, 'barrel'], [width - 250, 175, 'crate'], [width - 180, 195, 'sack'],
+      [200, height - 175, 'barrel'], [270, height - 165, 'crate'], [340, height - 178, 'sack'],
+      [width - 260, height - 175, 'crate'], [width - 190, height - 165, 'barrel'],
+    ];
+    for (const [x, y, key] of layout) this.prop(x, y, key, 2.05);
+    // A hanging lantern for work light.
+    this.prop(width / 2, 150, 'lantern-on', 2.2, 8);
+    this.addHearth(width / 2, 158, 165, false, 0.6);
+    this.prop(width / 2 + 90, 150, 'chain', 2, 6);
+    this.prop(width / 2 - 90, 150, 'chain', 2, 6);
+  }
+
+  /** Citadel gatehouse: a war-room — banners, weapon crates, braziers, statue. */
+  private dressCitadel(): void {
+    const { width, height } = this.definition;
+    // Banners flanking the far wall.
+    this.prop(150, 165, 'banner', 2.2, 8);
+    this.prop(width - 150, 165, 'banner', 2.2, 8);
+    // Braziers throwing hot citadel light.
+    this.prop(280, 190, 'brazier-lit', 2.2);
+    this.prop(width - 280, 190, 'brazier-lit', 2.2);
+    this.addHearth(280, 182, 175, true, 0.78);
+    this.addHearth(width - 280, 182, 175, true, 0.78);
+    // A grim statue watching the gate.
+    this.prop(width / 2, 160, 'statue', 2.4, 12);
+    // Weapon crates and barrels along the walls.
+    this.prop(200, height - 175, 'crate', 2.1);
+    this.prop(270, height - 165, 'crate', 2);
+    this.prop(width - 210, height - 175, 'barrel', 2.1);
+    this.prop(width - 280, height - 165, 'crate', 2);
+  }
+
+  // ---- small furniture built from primitives (kept, but sharpened) --------
+
+  private drawBed(x: number, y: number): void {
+    const g = this.add.graphics().setDepth(y / 10 + 6);
+    g.fillStyle(0x171821, 1).fillRect(x - 46, y - 26, 92, 54);
+    g.fillStyle(0x4a3327, 1).fillRect(x - 44, y - 24, 88, 50);
+    g.fillStyle(this.definition.accent, .5).fillRect(x - 40, y - 20, 76, 42);
+    g.fillStyle(0xc6b9a8, 1).fillRect(x - 36, y - 16, 26, 18);
+    g.lineStyle(2, 0x9b7048, .6).strokeRect(x - 44, y - 24, 88, 50);
+  }
+
+  private drawTable(x: number, y: number, stools = 0): void {
+    const g = this.add.graphics().setDepth(y / 10 + 6);
+    g.fillStyle(0x171821, 1).fillRect(x - 66, y - 30, 132, 60);
+    g.fillStyle(0x6c4c38, 1).fillRect(x - 62, y - 26, 124, 52);
+    g.lineStyle(2, 0x9b7048, .7).strokeRect(x - 62, y - 26, 124, 52);
+    for (let index = 0; index < stools; index += 1) {
+      const sx = x - 44 + index * 44;
+      g.fillStyle(0x4a3327, 1).fillCircle(sx, y + 44, 12);
+      g.fillStyle(0x6c4c38, 1).fillCircle(sx, y + 42, 9);
     }
   }
 
-  private drawWarehouse(graphics: Phaser.GameObjects.Graphics, width: number, height: number): void {
-    for (let row = 0; row < 2; row += 1) {
-      for (let column = 0; column < 4; column += 1) {
-        const x = 140 + column * 155;
-        const y = 140 + row * 120;
-        graphics.fillStyle(0x171821, 1).fillRect(x - 4, y + 7, 94, 72);
-        graphics.fillStyle(row ? 0x705139 : 0x5d4938, 1).fillRect(x, y, 86, 70);
-        graphics.lineStyle(3, 0xa47b4e, .75).strokeRect(x, y, 86, 70).lineBetween(x, y, x + 86, y + 70).lineBetween(x + 86, y, x, y + 70);
+  private drawBench(x: number, y: number): void {
+    const g = this.add.graphics().setDepth(y / 10 + 6);
+    g.fillStyle(0x171821, 1).fillRect(x - 84, y - 8, 168, 20);
+    g.fillStyle(0x514a50, 1).fillRect(x - 80, y - 6, 160, 16);
+    g.lineStyle(1, 0x736a78, .5).strokeRect(x - 80, y - 6, 160, 16);
+  }
+
+  private drawShelf(x: number, y: number): void {
+    const g = this.add.graphics().setDepth(y / 10 + 6);
+    g.fillStyle(0x171821, 1).fillRect(x - 66, y - 92, 132, 184);
+    g.fillStyle(0x4a3b2c, 1).fillRect(x - 60, y - 86, 120, 172);
+    const bottle = [0x79b87a, 0x9c70b5, 0xc58a55, 0x6fa8c0];
+    for (let row = -60; row <= 60; row += 60) {
+      g.fillStyle(0x2b2620, 1).fillRect(x - 52, y + row, 104, 7);
+      for (let b = -38; b <= 38; b += 26) {
+        g.fillStyle(bottle[Math.abs(b / 26) % bottle.length], .95).fillRect(x + b - 5, y + row - 20, 11, 19);
+        g.fillStyle(0xffffff, .12).fillRect(x + b - 3, y + row - 18, 3, 14);
       }
     }
-    graphics.fillStyle(0x8b7658, 1).fillRect(width - 220, height - 220, 130, 24);
+    g.lineStyle(2, 0x6a5540, .6).strokeRect(x - 60, y - 86, 120, 172);
   }
 
-  private drawCitadelInterior(graphics: Phaser.GameObjects.Graphics, width: number, height: number): void {
-    graphics.fillStyle(0x782f36, 1).fillRect(130, 95, 90, 180);
-    graphics.fillStyle(0xc85a43, 1).fillRect(width - 220, 95, 90, 180);
-    for (let rack = 0; rack < 3; rack += 1) {
-      const y = 160 + rack * 105;
-      graphics.fillStyle(0x171821, 1).fillRect(260, y, width - 520, 18);
-      for (let weapon = 0; weapon < 6; weapon += 1) {
-        const x = 290 + weapon * ((width - 580) / 5);
-        graphics.fillStyle(weapon % 2 ? 0xd0a15d : 0xaeb8c2, 1).fillRect(x, y - 48, 5, 62);
-        graphics.fillRect(x - 8, y - 38, 21, 5);
-      }
+  /** A rising fountain of embers over a forge/fire, respecting quality. */
+  private emberFountain(x: number, y: number): void {
+    const count = this.saves.get().settings.quality === 'low' ? 4 : this.saves.get().settings.reducedMotion ? 5 : 9;
+    for (let index = 0; index < count; index += 1) {
+      const ember = this.add.image(x + Phaser.Math.Between(-30, 30), y + Phaser.Math.Between(-6, 20), 'ember').setDepth(40).setScale(1.4);
+      this.tweens.add({ targets: ember, y: ember.y - Phaser.Math.Between(45, 95), x: ember.x + Phaser.Math.Between(-16, 16), alpha: 0, duration: Phaser.Math.Between(900, 1800), repeat: -1, delay: index * 130 });
     }
-    graphics.fillStyle(0xe45d43, .65).fillCircle(width / 2, height / 2, 38);
-    graphics.fillStyle(0xffbd62, .85).fillCircle(width / 2, height / 2 + 5, 20);
+  }
+
+  /**
+   * Interiors are lit by their own hearth/candles rather than a day/night cycle.
+   * We pin the daylight tint to a fixed dim value and set an enormous day length
+   * so it barely drifts during a visit, then punch warm light back through it
+   * from every emitter the dressing pass registered.
+   */
+  private createLighting(): void {
+    const save = this.saves.get();
+    const low = save.settings.quality === 'low' || (save.settings.quality === 'auto' && this.scale.width < 700);
+    this.lighting = new LightingSystem(this);
+    this.lighting.create();
+    // Effectively freeze the cycle: a day is ~28 hours of real play, so the fixed
+    // interior gloom never noticeably brightens or darkens while inside.
+    this.lighting.setDayLength(100000);
+    // A dim, indoor value — well into evening so the hearths clearly matter.
+    this.lighting.setDayProgress(0.8);
+    if (low) {
+      // On weak hardware keep only the two brightest hearths so night still reads.
+      const brightest = [...this.lightSources].sort((a, b) => (b.intensity ?? b.preset.intensity) - (a.intensity ?? a.preset.intensity)).slice(0, 2);
+      for (const light of brightest) {
+        this.lighting.addLight({ x: light.x, y: light.y, radius: light.radius, ...light.preset, ...(light.intensity !== undefined ? { intensity: light.intensity } : {}) });
+      }
+      return;
+    }
+    for (const light of this.lightSources) {
+      this.lighting.addLight({ x: light.x, y: light.y, radius: light.radius, ...light.preset, ...(light.intensity !== undefined ? { intensity: light.intensity } : {}) });
+    }
   }
 
   private createInteriorParticles(): void {
@@ -211,7 +403,7 @@ export class InteriorScene extends Phaser.Scene {
   }
 
   private createPlayer(): void {
-    this.player = this.physics.add.sprite(this.definition.width / 2, this.definition.height - 145, 'hero-up-0').setScale(1.65).setCollideWorldBounds(true);
+    this.player = this.physics.add.sprite(this.definition.width / 2, this.definition.height - 145, heroKey('up', 'idle', 0)).setScale(1.65).setCollideWorldBounds(true);
     const body = this.player.body as Phaser.Physics.Arcade.Body;
     body.setSize(16, 12).setOffset(8, 26);
     this.heldWeapon = this.add.image(this.player.x, this.player.y, `held-${this.saves.get().equippedWeapon}`).setScale(1.45).setOrigin(.2, .5).setDepth(25);
@@ -240,7 +432,7 @@ export class InteriorScene extends Phaser.Scene {
   private setupInput(): void {
     if (!this.input.keyboard) return;
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.keys = this.input.keyboard.addKeys('W,A,S,D,E,F,I,R,SHIFT,ESC,SPACE,ONE,TWO,THREE,FOUR,FIVE,SIX,SEVEN,EIGHT') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard.addKeys('W,A,S,D,E,F,I,R,Z,X,V,SHIFT,ESC,SPACE,ONE,TWO,THREE,FOUR,FIVE,SIX,SEVEN,EIGHT') as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: Phaser.GameObjects.GameObject[], _deltaX: number, deltaY: number) => {
       if (!this.uiLocked) this.cycleWeapon(deltaY > 0 ? 1 : -1);
     });
@@ -263,6 +455,11 @@ export class InteriorScene extends Phaser.Scene {
     this.listen<string>('buy', (id) => this.buyWeapon(id));
     this.listen<string>('equip-item', (id) => { this.inventory.equip(id); audio.ui(); this.emitHud(); });
     this.listen<string>('use-item', (id) => this.useItem(id));
+    this.listen<number>('use-quick-slot', (index) => this.useQuickSlot(index));
+    this.listen<{ itemId?: string; slot?: number }>('assign-quick-slot', ({ itemId, slot }) => {
+      if (itemId && typeof slot === 'number' && this.inventory.setQuickSlot(slot, itemId)) { audio.ui(); this.emitHud(); }
+    });
+    this.listen<number>('clear-quick-slot', (slot) => { if (this.inventory.clearQuickSlot(slot)) { audio.ui(); this.emitHud(); } });
     this.listen<{ itemId?: string; direction?: 'toChest' | 'toInventory' }>('transfer-item', ({ itemId, direction }) => {
       if (itemId && direction && this.inventory.transfer(itemId, 1, direction)) { audio.pickup(); this.emitHud(); }
     });
@@ -272,7 +469,31 @@ export class InteriorScene extends Phaser.Scene {
     this.listen<void>('toggle-quality', () => this.toggleQuality());
     this.listen<void>('fullscreen', () => { if (this.scale.isFullscreen) this.scale.stopFullscreen(); else this.scale.startFullscreen(); });
     this.listen<void>('open-shop', () => GameEvents.emit('panel-open', 'shop'));
+    this.listen<string>('craft-recipe', (recipeId) => this.craftRecipe(recipeId));
+    this.listen<string>('upgrade-weapon', (weaponId) => this.upgradeWeapon(weaponId));
     this.listen<void>('reset-game', () => { this.saves.reset(); window.location.reload(); });
+  }
+
+  /**
+   * Craft a recipe at Runa's anvil, then refresh the HUD so the open panel
+   * re-renders with new material counts (the GameUI contract). Note: the craft
+   * stat is incremented inside CraftingSystem.craft, so it is intentionally NOT
+   * bumped again here (WorldScene bumps it a second time — a pre-existing quirk we
+   * don't replicate).
+   */
+  private craftRecipe(recipeId: string): void {
+    const result = this.crafting.craft(recipeId);
+    if (result.ok) audio.craft(); else audio.ui('error');
+    GameEvents.emit('toast', result.message);
+    this.emitHud();
+  }
+
+  /** Reinforce a weapon at the forge, then refresh the HUD + held-weapon sprite. */
+  private upgradeWeapon(weaponId: string): void {
+    const result = this.crafting.upgradeWeapon(weaponId);
+    if (result.ok) { audio.craft(); this.syncHeldWeapon(); } else audio.ui('error');
+    GameEvents.emit('toast', result.message);
+    this.emitHud();
   }
 
   private updatePlayer(time: number): void {
@@ -288,13 +509,11 @@ export class InteriorScene extends Phaser.Scene {
     this.player.setVelocity(input.x * speed, input.y * speed);
     if (input.lengthSq() > .02) {
       this.facing.copy(input).normalize();
-      const direction = Math.abs(input.x) > Math.abs(input.y) ? 'side' : input.y < 0 ? 'up' : 'down';
-      this.player.play(`hero-walk-${direction}`, true).setFlipX(direction === 'side' && input.x < 0);
+      this.setHeroAnimation('walk', input.x, input.y);
       if (time > this.lastStepAt + 340) { audio.step('wood'); this.lastStepAt = time; }
     } else {
-      this.player.setVelocity(0); this.player.anims.stop();
-      const direction = Math.abs(this.facing.x) > Math.abs(this.facing.y) ? 'side' : this.facing.y < 0 ? 'up' : 'down';
-      this.player.setTexture(`hero-${direction}-0`).setFlipX(direction === 'side' && this.facing.x < 0);
+      this.player.setVelocity(0);
+      this.setHeroAnimation('idle', this.facing.x, this.facing.y);
     }
     if (Phaser.Input.Keyboard.JustDown(this.keys.E)) this.interact();
     if (Phaser.Input.Keyboard.JustDown(this.keys.F)) this.useItem('blood_vial');
@@ -310,14 +529,62 @@ export class InteriorScene extends Phaser.Scene {
         if (weapon && this.saves.get().ownedWeapons.includes(weapon.id)) this.equipWeapon(weapon.id);
       }
     });
+    // Quick-item slots on Z / X / V — the same binding WorldScene should add.
+    const quickKeys = ['Z', 'X', 'V'];
+    quickKeys.forEach((key, index) => {
+      if (Phaser.Input.Keyboard.JustDown(this.keys[key])) this.useQuickSlot(index);
+    });
+  }
+
+  /**
+   * Chooses the hero animation from a movement/facing vector — mirrors
+   * WorldScene.setHeroAnimation so the exile animates identically indoors: five
+   * sculpted directions (the three facing right are mirrored for left) with a
+   * short hold on transient poses.
+   */
+  private setHeroAnimation(pose: HeroPose, dx: number, dy: number): void {
+    if (this.heroPose !== pose && this.time.now < this.heroPoseUntil) return;
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+    let dir: HeroDir;
+    if (absX < 0.001 && absY < 0.001) dir = this.heroDir;
+    else if (absX > absY * 2.2) dir = 'side';
+    else if (absY > absX * 2.2) dir = dy < 0 ? 'up' : 'down';
+    else dir = dy < 0 ? 'up-side' : 'down-side';
+    this.heroDir = dir;
+    this.heroPose = pose;
+    const flip = dir !== 'up' && dir !== 'down' && dx < 0;
+    const animKey = `hero-${dir}-${pose}`;
+    if (this.anims.exists(animKey)) this.player.play(animKey, true);
+    else { this.player.anims.stop(); this.player.setTexture(heroKey(dir, pose, 0)); }
+    this.player.setFlipX(flip);
+  }
+
+  /** Play a one-shot pose (attack/dash/hurt) and lock it for `holdMs`. */
+  private playHeroPose(pose: HeroPose, holdMs: number): void {
+    this.heroPoseUntil = 0;
+    this.setHeroAnimation(pose, this.facing.x, this.facing.y);
+    this.heroPoseUntil = this.time.now + holdMs;
+  }
+
+  /** Use the consumable bound to quick slot `index`, sharing useItem's feedback. */
+  private useQuickSlot(index: number): void {
+    const result = this.inventory.useQuickSlot(index);
+    GameEvents.emit('toast', result.message);
+    if (!result.used) return;
+    if (result.effect === 'heal') audio.heal();
+    else if (result.effect === 'smoke') this.playSmoke();
+    else audio.ui();
+    this.emitHud();
   }
 
   private updatePrompt(): void {
-    const candidates: Array<{ type: 'exit' | 'chest' | 'npc'; x: number; y: number; label: string }> = [
+    const candidates: Array<{ type: 'exit' | 'chest' | 'npc' | 'anvil'; x: number; y: number; label: string }> = [
       { type: 'exit', x: this.exitDoor.x, y: this.exitDoor.y, label: 'Выйти наружу' },
     ];
     if (this.chest) candidates.push({ type: 'chest', x: this.chest.x, y: this.chest.y, label: 'Открыть сундук' });
     if (this.npc) candidates.push({ type: 'npc', x: this.npc.x, y: this.npc.y, label: 'Поговорить' });
+    if (this.anvil) candidates.push({ type: 'anvil', x: this.anvil.x, y: this.anvil.y, label: 'Работать у наковальни' });
     const nearest = candidates
       .map((candidate) => ({ ...candidate, distance: Phaser.Math.Distance.Between(this.player.x, this.player.y, candidate.x, candidate.y) }))
       .filter((candidate) => candidate.distance < 86)
@@ -328,6 +595,14 @@ export class InteriorScene extends Phaser.Scene {
 
   private interact(): void {
     if (this.prompt === 'exit') return this.exitInterior();
+    if (this.prompt === 'anvil') {
+      // Runa's anvil is the crafting station: recipes carry a `station: 'runa'`,
+      // so interacting here opens the crafting panel where WorldScene wires the
+      // craft-recipe / upgrade-weapon events.
+      audio.craft();
+      GameEvents.emit('panel-open', 'craft');
+      return;
+    }
     if (this.prompt === 'chest') {
       if (this.chest && !this.saves.get().flags[`interior-chest:${this.definition.id}`]) {
         this.saves.mutate((save) => { save.flags[`interior-chest:${this.definition.id}`] = true; }, true);
@@ -393,15 +668,19 @@ export class InteriorScene extends Phaser.Scene {
     const direction = this.mobileMove.lengthSq() > .05 ? this.mobileMove.clone().normalize() : this.facing.clone().normalize();
     this.dashReadyAt = this.time.now + 1800;
     this.isDashing = true;
+    this.playHeroPose('dash', 200);
     this.player.setVelocity(direction.x * 520, direction.y * 520).setAlpha(.7);
-    audio.attack('ranged');
+    audio.dash();
     this.time.delayedCall(170, () => { this.isDashing = false; this.player.setAlpha(1).setVelocity(0); });
   }
 
   private interiorSpecial(): void {
     if (this.uiLocked || this.time.now < this.specialReadyAt) return;
+    const weapon = WEAPONS.find((entry) => entry.id === this.saves.get().equippedWeapon) ?? WEAPONS[0];
     this.specialReadyAt = this.time.now + 4500;
-    audio.attack('magic');
+    audio.special(weapon.kind);
+    this.playHeroPose('attack', 300);
+    this.lighting?.flash(this.player.x, this.player.y, 200, Phaser.Display.Color.HexStringToColor(weapon.accent).color, 460);
     const ring = this.add.circle(this.player.x, this.player.y, 26, 0xb46dcc, .4).setStrokeStyle(5, 0xf0ccff, .9).setDepth(90);
     this.tweens.add({ targets: ring, radius: 150, alpha: 0, duration: 520, onComplete: () => ring.destroy() });
   }
@@ -409,7 +688,8 @@ export class InteriorScene extends Phaser.Scene {
   private interiorAttack(): void {
     if (this.uiLocked) return;
     const weapon = WEAPONS.find((entry) => entry.id === this.saves.get().equippedWeapon) ?? WEAPONS[0];
-    audio.attack(weapon.kind);
+    if (weapon.cooldown >= 600) audio.heavyAttack(weapon.kind); else audio.attack(weapon.kind);
+    this.playHeroPose('attack', 200);
     this.heldWeapon?.setScale(1.8).setTint(Phaser.Display.Color.HexStringToColor(weapon.accent).color);
     this.time.delayedCall(130, () => this.heldWeapon?.setScale(1.45).clearTint());
     const x = this.player.x + this.facing.x * 38;
@@ -430,9 +710,29 @@ export class InteriorScene extends Phaser.Scene {
     GameEvents.emit('toast', result.message);
     if (result.used) {
       if (result.effect === 'heal') audio.heal();
+      else if (result.effect === 'smoke') this.playSmoke();
       else audio.ui();
       this.emitHud();
     }
+  }
+
+  /**
+   * Smoke bomb indoors. Interiors have no persistent enemies, so this is purely
+   * the visual "breather" cloud — the shared SmokeBomb module keeps it identical
+   * to the world effect (it simply finds no enemies to blind here).
+   */
+  private playSmoke(): void {
+    const settings = this.saves.get().settings;
+    const low = settings.quality === 'low' || (settings.quality === 'auto' && this.scale.width < 700);
+    detonateSmokeBomb(this, {
+      x: this.player.x,
+      y: this.player.y,
+      enemies: [],
+      reducedMotion: settings.reducedMotion,
+      lowQuality: low,
+    });
+    audio.special('magic');
+    this.lighting?.flash(this.player.x, this.player.y, 120, 0x8b8791, 320);
   }
 
   private emitHud(): void {
@@ -443,7 +743,9 @@ export class InteriorScene extends Phaser.Scene {
       health: save.health, maxHealth: this.inventory.maxHealth(), level: save.level, xp: save.xp, xpNext: XP_FOR_LEVEL(save.level), coins: save.coins,
       reputation: save.reputation, potions: this.inventory.quantity('blood_vial'), equippedWeapon: save.equippedWeapon, ownedWeapons: [...save.ownedWeapons],
       inventory: save.inventory.map((stack) => ({ ...stack })), chest: save.chest.map((stack) => ({ ...stack })), equipment: structuredClone(save.equipment),
-      discoveredLocations: [...save.discoveredLocations], currentScene: this.definition.id, settings: { ...save.settings },
+      discoveredLocations: [...save.discoveredLocations],
+      discoveredSecrets: Object.keys(save.flags).filter((key) => key.startsWith('secret-found:')).map((key) => key.slice('secret-found:'.length)),
+      currentScene: this.definition.id, settings: { ...save.settings },
       activeQuest: active && objective ? { title: active.quest.title, objective: objective.label, amount: active.progress.amount, required: objective.amount, ready: active.progress.status === 'ready' } : undefined,
       quests: this.quests.snapshotQuests(), claimedTiers: [...save.claimedTiers], tutorialDone: save.tutorialDone,
     };
@@ -482,6 +784,7 @@ export class InteriorScene extends Phaser.Scene {
 
   private cleanup(): void {
     this.eventDisposers.forEach((dispose) => dispose()); this.eventDisposers = [];
+    this.lighting?.destroy();
     this.ui?.destroy(); this.saves?.flush();
   }
 }

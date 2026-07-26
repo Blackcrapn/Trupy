@@ -1,9 +1,62 @@
-import type { PlayerSave } from '../game/types';
+import type { PlayerSave, PlayerStats } from '../game/types';
 
 const STORAGE_KEY = 'trupy-save-v1';
 
+/**
+ * localStorage is not always reachable: private browsing, strict cookie
+ * policies, sandboxed iframes and quota-exceeded all throw on access — and a
+ * throw here used to take the whole game down before the first frame.
+ *
+ * Storage is a convenience, not a requirement, so every access is guarded and
+ * falls back to an in-memory map. The player can still play a full session; only
+ * persistence between sessions is lost, and `storageAvailable` lets the UI say so.
+ */
+const memoryFallback = new Map<string, string>();
+let storageWarned = false;
+
+function storageGet(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    if (!storageWarned) {
+      storageWarned = true;
+      console.warn('Trupy: localStorage unavailable — progress will not persist between sessions.');
+    }
+    return memoryFallback.get(key) ?? null;
+  }
+}
+
+function storageSet(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    if (!storageWarned) {
+      storageWarned = true;
+      console.warn('Trupy: localStorage unavailable — progress will not persist between sessions.');
+    }
+    memoryFallback.set(key, value);
+  }
+}
+
+/** True when progress will actually survive a reload. */
+export function storageAvailable(): boolean {
+  try {
+    const probe = '__trupy_probe__';
+    window.localStorage.setItem(probe, '1');
+    window.localStorage.removeItem(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Save schema version. Bumped to 3 when crafting/bestiary/achievement state was
+// added. v1 and v2 saves upgrade in-place via load() below; every new field is
+// backfilled from a default so no existing data is lost.
+export const SAVE_VERSION = 3;
+
 export const DEFAULT_SAVE: PlayerSave = {
-  version: 2,
+  version: SAVE_VERSION,
   coins: 35,
   xp: 0,
   level: 1,
@@ -30,6 +83,23 @@ export const DEFAULT_SAVE: PlayerSave = {
   flags: {},
   tutorialDone: false,
   playtime: 0,
+  // v3 additions — empty by default so a brand-new game starts with no upgrades,
+  // no discovered lore and no achievements.
+  weaponUpgrades: {},
+  bestiary: {},
+  achievements: [],
+  stats: {
+    totalKills: 0,
+    bossKills: 0,
+    flawlessBossKills: 0,
+    bestCombo: 0,
+    itemsCrafted: 0,
+    weaponsUpgraded: 0,
+    coinsEarned: 0,
+    questsCompleted: 0,
+  },
+  // Start mid-morning: a new player should see the world clearly before night.
+  dayProgress: 0.34,
   settings: {
     sound: true,
     masterVolume: 0.85,
@@ -51,7 +121,7 @@ export class SaveSystem {
 
   private load(): PlayerSave {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      const stored = storageGet(STORAGE_KEY);
       if (!stored) return structuredClone(DEFAULT_SAVE);
       const parsed = JSON.parse(stored) as Partial<PlayerSave>;
       const migratedInventory = parsed.inventory?.length
@@ -64,7 +134,9 @@ export class SaveSystem {
       return {
         ...structuredClone(DEFAULT_SAVE),
         ...parsed,
-        version: 2,
+        // Always normalise to the current schema version regardless of the
+        // stored value (covers v1 and v2 -> v3).
+        version: SAVE_VERSION,
         potions: migratedInventory.find((stack) => stack.itemId === 'blood_vial')?.quantity ?? 0,
         inventory: migratedInventory,
         chest: parsed.chest?.map((stack) => ({ ...stack })) ?? structuredClone(DEFAULT_SAVE.chest),
@@ -82,6 +154,18 @@ export class SaveSystem {
         ownedWeapons: parsed.ownedWeapons?.length ? [...parsed.ownedWeapons] : ['rustblade'],
         equippedWeapon,
         claimedTiers: [...(parsed.claimedTiers ?? [])],
+        // --- v3 fields. Each falls back to a fresh default so pre-v3 saves,
+        // which lack these keys entirely, load cleanly. Records/arrays are
+        // shallow-copied to avoid sharing references with the parsed object. ---
+        weaponUpgrades: { ...(parsed.weaponUpgrades ?? {}) },
+        bestiary: { ...(parsed.bestiary ?? {}) },
+        achievements: [...(parsed.achievements ?? [])],
+        stats: { ...DEFAULT_SAVE.stats, ...(parsed.stats as Partial<PlayerStats> | undefined) },
+        // Clamp to 0..1: a corrupted or out-of-range value would otherwise leave
+        // the day/night cycle stuck outside its keyframe table.
+        dayProgress: typeof parsed.dayProgress === 'number' && Number.isFinite(parsed.dayProgress)
+          ? ((parsed.dayProgress % 1) + 1) % 1
+          : DEFAULT_SAVE.dayProgress,
       };
     } catch {
       return structuredClone(DEFAULT_SAVE);
@@ -108,7 +192,7 @@ export class SaveSystem {
 
   flush(): void {
     window.clearTimeout(this.timer);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(this.data));
+    storageSet(STORAGE_KEY, JSON.stringify(this.data));
   }
 
   reset(): PlayerSave {

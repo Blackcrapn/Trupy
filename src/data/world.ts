@@ -81,6 +81,105 @@ export const MAP_ROADS: number[][][] = [
 
 export const MAP_RIVER = '2480,0 2740,0 2740,3000 2480,3000';
 
+/**
+ * The river cuts the world in two north-to-south. These are the only places a
+ * road actually spans it, so the river gets solid collision everywhere *except*
+ * the vertical gap each bridge leaves. Both the world (deck art + collision
+ * gaps) and the map (bridge glyphs) read from this one list, so a bridge can
+ * never drift between the two views.
+ *
+ * `y` is the deck centre; `gap` is the walkable vertical opening in the river's
+ * collision wall. The points sit on MAP_ROADS where each road crosses the
+ * river's centre (x ≈ 2610), so the map glyph lands on the drawn road.
+ */
+export interface BridgeDefinition {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  /** Half-height of the collision gap the bridge punches through the river. */
+  gap: number;
+}
+
+export const RIVER_BRIDGES: BridgeDefinition[] = [
+  { id: 'north_bridge', name: 'Старый мост', x: 2630, y: 1316, gap: 78 },
+  { id: 'south_bridge', name: 'Мост перевозчика', x: 2630, y: 1698, gap: 78 },
+];
+
+/**
+ * Hidden locations rewarded by exploration. None sit on a road; each hides
+ * until the player is almost on top of it, and each carries a reward. `kind`
+ * decides the payoff: `chest` gives loot, `shrine` grants a permanent buff,
+ * `note` reveals lore (and a small material). Discovery persists via the
+ * `secret-found:<id>` save flag so the map can reveal them afterward.
+ */
+export interface SecretDefinition {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  kind: 'chest' | 'shrine' | 'note';
+  /** Prop texture drawn at the spot. */
+  texture: string;
+  /** In-world discovery/interaction line, shown in Russian. */
+  lore: string;
+}
+
+export const SECRET_POINTS: SecretDefinition[] = [
+  {
+    id: 'forgotten_crypt', name: 'Забытый склеп', x: 2245, y: 300, kind: 'chest', texture: 'crypt-entrance',
+    lore: 'За осевшими надгробиями зияет вход в забытый склеп. Внутри что-то ждало очень долго.',
+  },
+  {
+    id: 'smuggler_cache', name: 'Тайник контрабандиста', x: 2775, y: 2635, kind: 'chest', texture: 'chest-closed',
+    lore: 'Под гнилыми досками причала спрятан тюк — плата за молчание, так и не забранная.',
+  },
+  {
+    id: 'hermit_camp', name: 'Лагерь отшельника', x: 790, y: 1980, kind: 'note', texture: 'campfire',
+    lore: 'Остывший костёр отшельника. В дневнике строки: «Лес шепчет правду тем, кто уходит с троп».',
+  },
+  {
+    id: 'sunken_shrine', name: 'Затонувшее святилище', x: 3705, y: 285, kind: 'shrine', texture: 'altar',
+    lore: 'Полузатопленный алтарь древнее самой топи. Вода расступается, признавая идущего.',
+  },
+  {
+    id: 'ashen_watch', name: 'Разбитый дозор', x: 3300, y: 1160, kind: 'note', texture: 'obelisk',
+    lore: 'Обломки дозорной вышки. Обелиск хранит имена тех, кто первым спустился в шахты и не вернулся.',
+  },
+];
+
+/**
+ * Two-way shortcuts that reward map knowledge: stepping into one mouth fades the
+ * player out at its partner, skipping a long road detour between distant
+ * regions. Hidden until approached, like the secrets.
+ */
+export interface ShortcutDefinition {
+  id: string;
+  name: string;
+  texture: string;
+  a: { x: number; y: number };
+  b: { x: number; y: number };
+}
+
+export const SHORTCUT_PORTALS: ShortcutDefinition[] = [
+  {
+    id: 'mine_tunnel', name: 'Заброшенный штрек', texture: 'crypt-entrance',
+    a: { x: 3300, y: 1780 }, b: { x: 2180, y: 1815 },
+  },
+  {
+    id: 'marsh_causeway', name: 'Топяная гать', texture: 'bridge-plank',
+    a: { x: 3720, y: 935 }, b: { x: 3640, y: 2075 },
+  },
+];
+
+/**
+ * A secret third river crossing, hidden by reeds to the far north. Unlike the
+ * bridges it is a bare gap in the river collision (a shallow ford), so a player
+ * who explores the northern shore finds they can cross without walking down to a
+ * bridge. Kept in data so the collision builder and the map agree.
+ */
+export const HIDDEN_FORD = { id: 'reed_ford', name: 'Тайный брод', x: 2630, y: 300, gap: 70 } as const;
+
 export const REGION_ENTRANCES = [
   { id: 'home', x: 430, y: 620 }, { id: 'village', x: 900, y: 670 }, { id: 'cemetery', x: 1525, y: 650 },
   { id: 'forest', x: 1150, y: 1190 }, { id: 'ruins', x: 2280, y: 1080 }, { id: 'marsh', x: 3030, y: 650 },

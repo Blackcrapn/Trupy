@@ -72,6 +72,70 @@ export class InventorySystem {
     return { used: true, message: item.heal ? `Восстановлено ${item.heal} здоровья` : 'Дым скрывает ваш след', effect: item.heal ? 'heal' : 'smoke' };
   }
 
+  // ---- quick slots ------------------------------------------------------
+  // save.equipment.quick is a fixed 3-slot bar of nullable item ids. It is
+  // saved/loaded but was never wired to any usage logic; these three methods are
+  // that logic. Only *consumables* may be assigned — the bar is for potions and
+  // the smoke bomb, not armour or materials.
+
+  /** Number of quick slots. Mirrors the save's fixed-length array. */
+  static readonly QUICK_SLOTS = 3;
+
+  /** The current quick bar, always normalised to exactly QUICK_SLOTS entries. */
+  quickSlots(save: PlayerSave = this.saves.get()): Array<string | null> {
+    const slots = save.equipment.quick ?? [];
+    return Array.from({ length: InventorySystem.QUICK_SLOTS }, (_, index) => slots[index] ?? null);
+  }
+
+  private isValidSlot(index: number): boolean {
+    return Number.isInteger(index) && index >= 0 && index < InventorySystem.QUICK_SLOTS;
+  }
+
+  /**
+   * Assign a consumable to a quick slot. Rejects non-consumables and unknown
+   * items. Returns true on success. Assigning an item already in another slot
+   * moves it there (no duplicate binding), which keeps the small bar tidy.
+   */
+  setQuickSlot(index: number, itemId: string): boolean {
+    if (!this.isValidSlot(index)) return false;
+    const item = getItem(itemId);
+    if (!item || item.category !== 'consumable') return false;
+    this.saves.mutate((state) => {
+      const quick = this.quickSlots(state);
+      // Remove the item from any other slot so it lives in exactly one place.
+      for (let slot = 0; slot < quick.length; slot += 1) {
+        if (quick[slot] === itemId) quick[slot] = null;
+      }
+      quick[index] = itemId;
+      state.equipment.quick = quick;
+    }, true);
+    return true;
+  }
+
+  /** Clear a quick slot. Returns true if the index was valid. */
+  clearQuickSlot(index: number): boolean {
+    if (!this.isValidSlot(index)) return false;
+    this.saves.mutate((state) => {
+      const quick = this.quickSlots(state);
+      quick[index] = null;
+      state.equipment.quick = quick;
+    }, true);
+    return true;
+  }
+
+  /**
+   * Use the consumable bound to a quick slot. Returns the SAME result shape as
+   * `use()` so scenes can treat quick-slot use exactly like any other item use
+   * (heal glow, smoke bomb, toast). An empty or invalid slot returns a friendly
+   * not-usable result rather than throwing.
+   */
+  useQuickSlot(index: number): UseItemResult {
+    if (!this.isValidSlot(index)) return { used: false, message: 'Ячейка недоступна' };
+    const itemId = this.quickSlots()[index];
+    if (!itemId) return { used: false, message: 'Ячейка пуста' };
+    return this.use(itemId);
+  }
+
   transfer(itemId: string, quantity: number, direction: 'toChest' | 'toInventory'): boolean {
     const save = this.saves.get();
     const from = direction === 'toChest' ? save.inventory : save.chest;

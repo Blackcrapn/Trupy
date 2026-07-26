@@ -71,15 +71,6 @@ button:focus-visible { outline: 3px solid #f1c36c; outline-offset: 3px; }
 .minimap-wrap { position: absolute; top: calc(18px + var(--safe-top)); right: calc(18px + var(--safe-right)); width: 190px; }
 .minimap { position: relative; height: 126px; background: #171d23; border: 3px solid #5b6070; box-shadow: 4px 4px #0008, inset 0 0 25px #000; overflow: hidden; }
 .minimap::before { content: ''; position: absolute; inset: 0; background-image: linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px), linear-gradient(90deg,rgba(255,255,255,.025) 1px, transparent 1px); background-size: 12px 12px; }
-.mini-zone { position: absolute; border: 1px solid #69707d; opacity: .72; }
-.mini-zone.home { left: 10%; top: 10%; width: 18%; height: 25%; background: #625365; }
-.mini-zone.village { left: 25%; top: 14%; width: 28%; height: 31%; background: #626457; }
-.mini-zone.cemetery { left: 55%; top: 10%; width: 29%; height: 34%; background: #505861; }
-.mini-zone.forest { left: 27%; top: 49%; width: 38%; height: 41%; background: #344f45; }
-.mini-zone.ruins { left: 69%; top: 52%; width: 25%; height: 37%; background: #55445c; }
-.mini-road { position: absolute; height: 5px; background: #716a5d; transform-origin: left; opacity: .55; }
-.mini-road.r1 { width: 65%; left: 18%; top: 34%; transform: rotate(8deg); }
-.mini-road.r2 { width: 52%; left: 39%; top: 53%; transform: rotate(25deg); }
 .mini-player { position: absolute; left: 15%; top: 30%; width: 9px; height: 9px; border: 2px solid #fff; background: #d94f73; transform: translate(-50%, -50%) rotate(45deg); box-shadow: 0 0 0 2px #090b12, 0 0 10px #d94f73; transition: left .15s linear, top .15s linear; z-index: 3; }
 .location-name { display: block; margin-top: 5px; text-align: right; color: #bbb6c4; font: 9px 'Roboto Mono'; letter-spacing: .12em; text-shadow: 1px 1px #000; }
 
@@ -108,12 +99,12 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
 .tutorial-step { display: block; color: #b98ad1; font-size: 8px; letter-spacing: .17em; }
 .tutorial-tip strong { display: block; margin: 4px 0; font: 13px 'Russo One'; }
 .tutorial-tip p { margin: 0; color: #bbb9c5; font-size: 9px; line-height: 1.5; }
-.toast { position: absolute; left: 50%; top: 26%; max-width: min(440px, 85vw); padding: 10px 16px; transform: translate(-50%, -12px); background: rgba(16,18,27,.96); border: 2px solid #b78b5a; box-shadow: 4px 4px #0009; opacity: 0; color: #f4e2be; font-size: 11px; text-align: center; transition: opacity .2s, transform .2s; }
-.toast.visible { opacity: 1; transform: translate(-50%, 0); }
+.toast { position: absolute; left: 50%; top: 26%; max-width: min(440px, 85vw); padding: 10px 16px; transform: translate(-50%, -16px) scale(.96); background: rgba(16,18,27,.96); border: 2px solid #b78b5a; box-shadow: 4px 4px #0009; opacity: 0; color: #f4e2be; font-size: 11px; text-align: center; transition: opacity .2s ease-out, transform .32s cubic-bezier(.2,1.4,.4,1); }
+.toast.visible { opacity: 1; transform: translate(-50%, 0) scale(1); }
 
 .mobile-controls { display: none; }
 
-.screen-panel, .dialogue-layer, .death-screen, .ending-screen { position: absolute; inset: 0; pointer-events: none; opacity: 0; visibility: hidden; transition: opacity .18s; }
+.screen-panel, .dialogue-layer, .death-screen, .ending-screen { position: absolute; inset: 0; z-index: 70; pointer-events: none; opacity: 0; visibility: hidden; transition: opacity .18s; }
 .screen-panel[aria-hidden="false"], .dialogue-layer[aria-hidden="false"], .death-screen[aria-hidden="false"], .ending-screen[aria-hidden="false"] { pointer-events: auto; opacity: 1; visibility: visible; }
 .panel-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; background: rgba(3,4,8,.74); backdrop-filter: blur(3px); }
 .panel-shell { position: absolute; left: 50%; top: 50%; width: min(980px, calc(100% - 42px)); height: min(650px, calc(100% - 42px)); transform: translate(-50%, -50%); display: flex; flex-direction: column; background: linear-gradient(150deg, rgba(26,28,40,.985), rgba(11,12,19,.99)); border: 3px solid #5f6273; box-shadow: 9px 9px #0009, inset 0 0 50px #0004; }
@@ -173,7 +164,10 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
 .pass-tier button { width: 100%; min-height: 30px; background: #774358; border: 1px solid #a96881; font-size: 8px; font-weight: 700; }
 .pass-tier button:disabled { background: #242630; border-color: #3d404d; color: #70727e; }
 
-.world-map { position: relative; width: 100%; height: min(440px, calc(100vh - 210px)); min-height: 320px; background: #151b1d; border: 3px solid #515968; box-shadow: inset 0 0 60px #000; overflow: hidden; }
+/* Aspect-locked to the world (4600:3000) so the SVG's xMidYMid-meet fills the
+   box edge-to-edge without distortion, and #map-player's container-percentage
+   placement stays accurate. Width is capped by available height. */
+.world-map { position: relative; width: min(100%, calc((100vh - 210px) * 4600 / 3000)); aspect-ratio: 4600 / 3000; max-height: calc(100vh - 210px); margin: 0 auto; background: #151b1d; border: 3px solid #515968; box-shadow: inset 0 0 60px #000; overflow: hidden; }
 .world-map::before { content: ''; position: absolute; inset: 0; opacity: .2; background-image: radial-gradient(#9b9b8b 1px, transparent 1px); background-size: 11px 11px; }
 .map-zone { position: absolute; display: grid; place-items: center; border: 2px solid #75766f; box-shadow: inset 0 0 35px #0006; z-index: 2; }
 .map-zone b { padding: 5px 8px; background: #101218cc; font-size: 9px; }
@@ -220,8 +214,12 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
 .dialogue-actions button.primary { background: #80455c; border-color: #bc708b; }
 .dialogue-actions button:hover { filter: brightness(1.18); }
 
-.death-screen { display: grid; place-items: center; background: rgba(24,3,9,.84); backdrop-filter: grayscale(1) blur(4px); }
+.death-screen { display: grid; place-items: center; background: rgba(24,3,9,.84); backdrop-filter: grayscale(1) blur(4px); transition: opacity .55s ease; }
+.death-screen.appear { animation: deathFade .7s ease; }
 .death-screen > div { max-width: 520px; padding: 34px; text-align: center; background: #140e14; border: 3px solid #7f384d; box-shadow: 9px 9px #0008; }
+.death-screen.appear > div { animation: deathRise .8s cubic-bezier(.2,.9,.3,1); }
+@keyframes deathFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes deathRise { from { opacity: 0; transform: translateY(22px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .death-screen span, .ending-screen > span { color: #c86f87; font-size: 9px; letter-spacing: .22em; }
 .death-screen h2, .ending-screen h2 { margin: 10px 0; font: 28px 'Russo One'; }
 .death-screen p, .ending-screen p { color: #b8b2bd; font-size: 11px; line-height: 1.6; }
@@ -251,10 +249,9 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
   .minimap-wrap { top: calc(8px + var(--safe-top)); right: calc(8px + var(--safe-right)); width: 130px; }
   .minimap { height: 88px; border-width: 2px; }
   .location-name { font-size: 7px; }
-  .quick-nav { right: calc(8px + var(--safe-right)); top: calc(105px + var(--safe-top)); bottom: auto; display: grid; grid-template-columns: repeat(2, 34px); gap: 4px; }
-  .quick-nav button { min-width: 34px; width: 34px; height: 32px; padding: 2px; font-size: 0; }
+  .quick-nav { right: calc(8px + var(--safe-right)); top: calc(150px + var(--safe-top)); bottom: auto; display: grid; grid-template-columns: repeat(3, 32px); gap: 4px; }
+  .quick-nav button { min-width: 32px; width: 32px; height: 30px; padding: 2px; font-size: 0; }
   .quick-nav button span { font-size: 8px; }
-  .quick-nav button:nth-child(5), .quick-nav button:nth-child(6) { display: none; }
   .weapon-slot { left: 50%; bottom: calc(154px + var(--safe-bottom)); min-width: 166px; height: 48px; transform: translateX(-50%); padding: 5px 24px 5px 5px; }
   .weapon-slot > span { width: 36px; height: 34px; font-size: 19px; }
   .weapon-slot small { display: none; }
@@ -304,7 +301,6 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
   .rep-orb { width: 72px; }
   .pass-track { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
   .pass-tier { min-height: 165px; padding: 8px; }
-  .world-map { min-height: 300px; }
   .pause-layout { grid-template-columns: 1fr; }
   .panel-intro.split { align-items: stretch; }
   .dialogue-card { grid-template-columns: 1fr; }
@@ -320,36 +316,40 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
 }
 
 /* Version 2: expanded world, inventory and audio */
-.mini-zone.home { left: 5%; top: 7%; width: 12%; height: 18%; }
-.mini-zone.village { left: 15%; top: 9%; width: 16%; height: 22%; }
-.mini-zone.cemetery { left: 32%; top: 7%; width: 18%; height: 24%; }
-.mini-zone.forest { left: 14%; top: 35%; width: 31%; height: 34%; }
-.mini-zone.ruins { left: 45%; top: 35%; width: 18%; height: 30%; }
-.mini-zone.marsh { left: 61%; top: 6%; width: 22%; height: 29%; background: #34584e; }
-.mini-zone.mines { left: 70%; top: 39%; width: 16%; height: 22%; background: #5a4e42; }
-.mini-zone.docks { left: 59%; top: 70%; width: 22%; height: 22%; background: #425765; }
-.mini-zone.citadel { left: 84%; top: 48%; width: 14%; height: 42%; background: #6a4049; }
-.mini-road.r1 { width: 64%; left: 12%; top: 28%; transform: rotate(8deg); }
-.mini-road.r2 { width: 54%; left: 31%; top: 49%; transform: rotate(22deg); }
-.mini-road.r3 { width: 37%; left: 61%; top: 66%; transform: rotate(-9deg); }
+/* (Legacy .mini-zone/.mini-road rules removed — the minimap is SVG-driven now.) */
 
-.loot-banner { --loot-color:#e9b85e; position:absolute; right:calc(20px + var(--safe-right)); top:calc(178px + var(--safe-top)); min-width:260px; padding:10px 14px; display:grid; grid-template-columns:42px 1fr auto; align-items:center; gap:11px; background:linear-gradient(100deg,rgba(16,18,27,.98),rgba(28,25,35,.94)); border:2px solid var(--loot-color); box-shadow:5px 5px #0008,0 0 22px color-mix(in srgb,var(--loot-color) 18%,transparent); transform:translateX(35px); opacity:0; transition:opacity .2s,transform .25s; }
-.loot-banner.visible { opacity:1; transform:translateX(0); }
+.loot-banner { --loot-color:#e9b85e; position:absolute; right:calc(20px + var(--safe-right)); top:calc(178px + var(--safe-top)); min-width:260px; padding:10px 14px; display:grid; grid-template-columns:42px 1fr auto; align-items:center; gap:11px; background:linear-gradient(100deg,rgba(16,18,27,.98),rgba(28,25,35,.94)); border:2px solid var(--loot-color); box-shadow:5px 5px #0008,0 0 22px color-mix(in srgb,var(--loot-color) 18%,transparent); transform:translateX(44px) scale(.96); opacity:0; transition:opacity .22s ease-out, transform .34s cubic-bezier(.2,1.35,.4,1); }
+.loot-banner.visible { opacity:1; transform:translateX(0) scale(1); }
 .loot-banner > span { width:38px; height:38px; display:grid; place-items:center; background:#0c0e15; border:1px solid color-mix(in srgb,var(--loot-color) 70%,#555); color:var(--loot-color); font-size:22px; }
 .loot-banner div { display:grid; gap:3px; }
 .loot-banner small { color:#838694; font-size:7px; letter-spacing:.18em; }
 .loot-banner strong { font-size:10px; }
 .loot-banner > b { color:var(--loot-color); font:15px 'Russo One'; }
-.combo-banner { position:absolute; left:50%; top:calc(142px + var(--safe-top)); transform:translate(-50%,-10px) scale(.92); display:flex; align-items:center; gap:9px; padding:7px 13px; background:rgba(13,15,23,.9); border:2px solid #8e6379; box-shadow:4px 4px #0007; opacity:0; transition:opacity .16s,transform .16s; }
-.combo-banner.visible { opacity:1; transform:translate(-50%,0) scale(1); }
-.combo-banner.hot { border-color:#e19758; box-shadow:4px 4px #0007,0 0 18px #db694b44; }
-.combo-banner > strong { color:#e09ab2; font:28px 'Russo One'; line-height:1; }
-.combo-banner.hot > strong { color:#ffb064; }
+.combo-banner { --combo-scale:1; position:absolute; left:50%; top:calc(142px + var(--safe-top)); transform:translate(-50%,-12px) scale(.85); transform-origin:center top; display:flex; align-items:center; gap:9px; padding:7px 13px; background:rgba(13,15,23,.9); border:2px solid #8e6379; box-shadow:4px 4px #0007; opacity:0; transition:opacity .16s ease-out, transform .26s cubic-bezier(.2,1.5,.35,1), border-color .18s; }
+.combo-banner.visible { opacity:1; transform:translate(-50%,0) scale(var(--combo-scale)); }
+/* Colour heat + glow climb with the streak tier. */
+.combo-banner[data-tier="1"] { border-color:#a56e86; }
+.combo-banner[data-tier="2"] { border-color:#c58267; box-shadow:4px 4px #0007,0 0 16px #d0704a3a; }
+.combo-banner[data-tier="3"] { border-color:#e0964f; box-shadow:4px 4px #0007,0 0 22px #e5813f55; }
+.combo-banner[data-tier="4"] { border-color:#f4b24a; box-shadow:4px 4px #0007,0 0 30px #f59a3a77; }
+.combo-banner > strong { color:#e09ab2; font:28px 'Russo One'; line-height:1; transition:color .18s, text-shadow .18s; }
+.combo-banner[data-tier="1"] > strong { color:#eaa08a; }
+.combo-banner[data-tier="2"] > strong { color:#ffb877; text-shadow:0 0 10px #e6813f66; }
+.combo-banner[data-tier="3"] > strong { color:#ffb064; text-shadow:0 0 14px #f2853c88; }
+.combo-banner[data-tier="4"] > strong { color:#ffcf6b; text-shadow:0 0 20px #ffab4baa; }
 .combo-banner div { display:grid; gap:2px; }
 .combo-banner span { color:#878995; font-size:7px; letter-spacing:.16em; }
 .combo-banner b { color:#e8dbe2; font-size:9px; }
-.rift-banner { position:absolute; left:50%; top:calc(205px + var(--safe-top)); min-width:310px; transform:translate(-50%,-12px); padding:10px 14px; display:flex; align-items:center; gap:12px; background:linear-gradient(110deg,rgba(34,19,42,.96),rgba(14,16,24,.95)); border:2px solid #a562ba; box-shadow:5px 5px #0008,0 0 24px #a34db744; opacity:0; transition:opacity .2s,transform .2s; }
-.rift-banner.visible { opacity:1; transform:translate(-50%,0); }
+/* Subtle shake at 6+; re-applied per hit by toggling the class in JS. */
+.combo-banner.shake { animation:comboShake .32s ease-in-out; }
+@keyframes comboShake {
+  0%,100% { transform:translate(-50%,0) scale(var(--combo-scale)); }
+  20% { transform:translate(calc(-50% - 3px),0) scale(var(--combo-scale)) rotate(-1.2deg); }
+  45% { transform:translate(calc(-50% + 3px),0) scale(var(--combo-scale)) rotate(1.2deg); }
+  70% { transform:translate(calc(-50% - 2px),0) scale(var(--combo-scale)) rotate(-.6deg); }
+}
+.rift-banner { position:absolute; left:50%; top:calc(205px + var(--safe-top)); min-width:310px; transform:translate(-50%,-18px) scale(.95); padding:10px 14px; display:flex; align-items:center; gap:12px; background:linear-gradient(110deg,rgba(34,19,42,.96),rgba(14,16,24,.95)); border:2px solid #a562ba; box-shadow:5px 5px #0008,0 0 24px #a34db744; opacity:0; transition:opacity .22s ease-out, transform .38s cubic-bezier(.2,1.4,.4,1); }
+.rift-banner.visible { opacity:1; transform:translate(-50%,0) scale(1); }
 .rift-banner > span { color:#e1a1f2; font-size:30px; text-shadow:0 0 14px #c859e4; }
 .rift-banner div { display:grid; gap:3px; }
 .rift-banner small { color:#a17ba9; font-size:7px; letter-spacing:.17em; }
@@ -429,6 +429,26 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
 .map-poi text { fill:#f0c777; text-anchor:middle; font:700 44px 'Roboto Mono'; }
 .map-rift circle { fill:#5d326c; stroke:#d78bea; stroke-width:16; filter:drop-shadow(0 0 24px #b757cf); }
 .map-rift text { fill:#f0c2ff; text-anchor:middle; font:700 52px 'Roboto Mono'; }
+/* Ground-texture overlay painted over each discovered region's gradient fill. */
+.map-grain-layer { pointer-events:none; opacity:.5; mix-blend-mode:overlay; }
+/* Bridges + ford across the river. */
+.map-bridge rect { fill:#5a4433; stroke:#8a6f4e; stroke-width:8; }
+.map-bridge text { fill:#f0d8b4; text-anchor:middle; font:700 46px 'Roboto Mono'; }
+/* Building name plates on the full map. */
+.map-poi-name { fill:#d8cfa0; text-anchor:middle; font:600 26px 'Roboto Mono',monospace; paint-order:stroke; stroke:#11131a; stroke-width:9; letter-spacing:1px; }
+/* Discovered secrets + shortcut mouths. */
+.map-secret circle { fill:#3a5540; stroke:#e0c778; stroke-width:12; filter:drop-shadow(0 0 18px #c7a44e88); }
+.map-secret text { fill:#f4e3a6; text-anchor:middle; font:700 40px 'Roboto Mono'; }
+.map-secret-name { fill:#e8d99e; text-anchor:middle; font:600 26px 'Roboto Mono',monospace; paint-order:stroke; stroke:#11131a; stroke-width:9; }
+.map-shortcut-link { stroke:#d7b86a; stroke-width:10; stroke-dasharray:34 30; opacity:.7; }
+/* Current objective pin. */
+.map-objective circle { fill:#8a3a55aa; stroke:#f0a7c4; stroke-width:12; filter:drop-shadow(0 0 22px #d7638e); }
+.map-objective text { fill:#ffdcea; text-anchor:middle; font:700 54px 'Roboto Mono'; }
+.map-objective { animation:mapPulse 1.4s ease-in-out infinite; transform-origin:center; transform-box:fill-box; }
+@keyframes mapPulse { 0%,100% { opacity:.7; } 50% { opacity:1; } }
+/* Map header with live time/weather. */
+.map-toolbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.map-env { color:#d8cbe0; font:10px 'Roboto Mono'; letter-spacing:.1em; padding:4px 10px; background:#141622cc; border:1px solid #4a4e5f; }
 .minimap-svg .map-label,.minimap-svg .map-danger-label,.minimap-svg .map-poi { display:none; }
 
 .quality-low .hud-card, .quality-low .panel-backdrop { backdrop-filter:none; }
@@ -526,3 +546,212 @@ kbd { padding: 2px 5px; color: #d6d2db; background: #282a36; border: 1px solid #
   .shop-grid { grid-template-columns:1fr; }
   .weapon-hotbar { width:min(270px,70vw); }
 }
+
+/* ==========================================================================
+   Version 5: crafting, bestiary, achievements, boss bar, environment widget,
+   radial cooldowns, hurt vignette, styled confirm. Same dark-gothic register.
+   ========================================================================== */
+
+/* --- Environment (clock + weather) widget --- */
+.env-widget { margin-top:6px; display:flex; align-items:center; gap:8px; padding:6px 9px; background:linear-gradient(120deg,rgba(20,22,32,.92),rgba(11,13,20,.9)); border:2px solid #4a4e5f; box-shadow:3px 3px #0007; }
+.env-widget.night { border-color:#5a5a86; box-shadow:3px 3px #0007,0 0 12px #4b4a8a33; }
+.env-widget.day { border-color:#6c6350; box-shadow:3px 3px #0007,0 0 12px #b0894a2a; }
+.env-icon { width:24px; min-width:24px; height:24px; display:grid; place-items:center; background:#0d0f16; border:1px solid #494c5b; color:#e2c98d; font-size:14px; }
+.env-widget.night .env-icon { color:#b9bce8; }
+.env-labels { display:grid; gap:1px; min-width:0; }
+.env-labels b { font:9px 'Russo One'; letter-spacing:.08em; color:#e4dfe8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.env-labels small { color:#9a9cad; font-size:7px; letter-spacing:.1em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* --- Boss health bar (top-centre) --- */
+.boss-bar { position:absolute; left:50%; top:calc(16px + var(--safe-top)); width:min(620px,64vw); transform:translate(-50%,-16px); padding:9px 16px 11px; background:linear-gradient(180deg,rgba(28,12,16,.96),rgba(11,9,14,.95)); border:2px solid #8a3a4d; box-shadow:5px 5px #0009,0 0 26px #a3405044; opacity:0; transition:opacity .3s ease, transform .4s cubic-bezier(.2,1.25,.4,1); z-index:30; }
+.boss-bar[aria-hidden="false"] { opacity:1; transform:translate(-50%,0); }
+.boss-bar.defeated { opacity:0; transform:translate(-50%,-10px) scale(.98); filter:grayscale(.6); transition:opacity .8s ease, transform .8s ease, filter .8s ease; }
+.boss-heading { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; }
+.boss-eyebrow { color:#d98596; font-size:8px; font-weight:700; letter-spacing:.2em; }
+.boss-bar strong { font:16px 'Russo One'; letter-spacing:.04em; color:#f2dbe0; text-shadow:2px 2px #000; }
+.boss-track { position:relative; height:15px; background:#0a0509; border:2px solid #4a2831; overflow:hidden; box-shadow:inset 0 2px 6px #000; }
+.boss-track i { display:block; height:100%; width:100%; background:linear-gradient(90deg,#7c1f30,#c8425c 70%,#e56a80); box-shadow:inset 0 2px rgba(255,255,255,.18); transition:width .3s cubic-bezier(.3,.8,.4,1); }
+.boss-segments { position:absolute; inset:0; pointer-events:none; }
+.boss-segments span { position:absolute; top:-2px; bottom:-2px; width:2px; background:#160b0f; box-shadow:0 0 0 1px #00000055; }
+.boss-bar.phase-shift .boss-track { animation:bossPhase .6s ease; }
+@keyframes bossPhase { 0%,100% { box-shadow:inset 0 2px 6px #000; } 40% { box-shadow:inset 0 2px 6px #000,0 0 20px #ffbf6f; border-color:#e6a24d; } }
+
+/* --- Radial ability cooldown sweep (conic-gradient clock wipe) --- */
+/* Overlays the ability-slot content while cooling; the swept sector shrinks as
+   --cooldown falls from 360deg (full) to 0 (ready). */
+.ability-slot::before { content:''; position:absolute; inset:0; z-index:1; pointer-events:none; opacity:0; background:conic-gradient(from -90deg, rgba(8,9,14,.82) 0 var(--cooldown,0deg), transparent var(--cooldown,0deg) 360deg); transition:opacity .15s; }
+.ability-slot.cooling::before { opacity:1; }
+.ability-slot b { z-index:3; background:transparent; }
+.mobile-button { position:relative; overflow:hidden; }
+.mobile-button.dash::before, .mobile-button.special::before { content:''; position:absolute; inset:0; z-index:1; pointer-events:none; opacity:0; border-radius:50%; background:conic-gradient(from -90deg, rgba(6,7,11,.7) 0 var(--cooldown,0deg), transparent var(--cooldown,0deg) 360deg); transition:opacity .15s; }
+.mobile-button.dash.cooling::before, .mobile-button.special.cooling::before { opacity:1; }
+
+/* --- Hurt vignette (damage flash on the root) --- */
+.hurt-vignette { --hurt-alpha:1; position:absolute; inset:0; pointer-events:none; opacity:0; z-index:60; background:radial-gradient(ellipse at center, transparent 42%, rgba(150,20,32,calc(.55 * var(--hurt-alpha))) 100%); box-shadow:inset 0 0 120px rgba(150,18,30,calc(.6 * var(--hurt-alpha))); }
+.hurt-vignette.flash { animation:hurtFlash .6s ease-out; }
+@keyframes hurtFlash { 0% { opacity:0; } 12% { opacity:1; } 100% { opacity:0; } }
+
+/* --- Styled confirmation (replaces window.confirm) --- */
+.confirm-overlay { position:fixed; inset:0; z-index:50; display:grid; place-items:center; background:rgba(4,3,6,.72); backdrop-filter:blur(3px); animation:confirmIn .2s ease-out; }
+@keyframes confirmIn { from { opacity:0; } to { opacity:1; } }
+.confirm-box { max-width:400px; margin:18px; padding:22px 24px; text-align:center; background:linear-gradient(150deg,rgba(28,20,24,.99),rgba(14,10,14,.99)); border:3px solid #883a4c; box-shadow:8px 8px #0009,inset 0 0 40px #0004; animation:confirmRise .28s cubic-bezier(.2,.9,.3,1); }
+@keyframes confirmRise { from { opacity:0; transform:translateY(16px) scale(.97); } to { opacity:1; transform:translateY(0) scale(1); } }
+.confirm-box p { margin:10px 0 18px; color:#cfc8cf; font:11px/1.6 'Roboto Mono'; }
+.confirm-actions { display:flex; gap:10px; justify-content:center; }
+.confirm-actions button { min-height:40px; padding:8px 18px; font-size:9px; font-weight:700; letter-spacing:.06em; background:#2a2c38; border:2px solid #505463; color:#d8d3dc; }
+.confirm-actions button.subtle { background:#242733; border-color:#474b59; color:#aab; }
+.confirm-actions button.danger { background:#8a3f52; border-color:#c1748c; color:#f4e2e8; }
+.confirm-actions button:hover { filter:brightness(1.18); }
+
+/* --- Shared: ingredient chips + discovery meters --- */
+.ingredient-row { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+.ingredient { display:inline-flex; align-items:center; gap:5px; padding:4px 8px; background:#10121a; border:1px solid #3a3d4a; color:#b6b3bf; font-size:8px; }
+.ingredient em { font-style:normal; color:#cdbf9a; font-size:11px; }
+.ingredient b { color:#8fce9d; font-weight:700; }
+.ingredient.short { border-color:#7d3a44; background:#1c1013; color:#d68893; }
+.ingredient.short b { color:#e07683; }
+.discovery-meter { flex:1; height:8px; min-width:120px; background:#14121a; border:1px solid #3c3a47; overflow:hidden; }
+.discovery-meter i { display:block; height:100%; background:linear-gradient(90deg,var(--violet),#d6a2f0); transition:width .3s ease; }
+
+/* --- Crafting panel --- */
+.craft-layout { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); gap:18px; align-items:start; }
+.craft-section { min-width:0; }
+.craft-list { display:grid; gap:10px; }
+.craft-recipe { --rarity:#a9adb8; display:grid; grid-template-columns:56px minmax(0,1fr) auto; align-items:center; gap:12px; padding:12px; background:linear-gradient(145deg,#181a24,#11131b); border:1px solid #3c3f4d; border-left:4px solid var(--rarity); box-shadow:inset 0 0 22px #0003; }
+.craft-recipe.ready { box-shadow:inset 0 0 22px color-mix(in srgb,var(--rarity) 12%,transparent),0 0 0 1px color-mix(in srgb,var(--rarity) 45%,transparent); }
+.craft-icon { position:relative; width:56px; height:56px; display:grid; place-items:center; color:var(--rarity); background:#0c0e15; border:1px solid color-mix(in srgb,var(--rarity) 60%,#444); font-size:26px; text-shadow:0 0 12px color-mix(in srgb,var(--rarity) 55%,transparent); }
+.craft-icon em { position:absolute; right:3px; bottom:2px; min-width:15px; height:15px; display:grid; place-items:center; background:#e7e3ea; color:#12141b; border-radius:50%; font:normal 8px 'Roboto Mono'; }
+.craft-copy { min-width:0; }
+.craft-copy small { color:#8f8d9c; font-size:7px; letter-spacing:.1em; }
+.craft-copy b { display:block; margin:4px 0; font:12px 'Russo One'; }
+.craft-copy p { margin:0; color:#9a99a6; font-size:8px; line-height:1.5; }
+.craft-recipe > button { align-self:stretch; min-width:96px; padding:8px 10px; background:#764257; border:2px solid #a96881; color:#eee8ef; font-size:8px; font-weight:700; letter-spacing:.05em; }
+.craft-recipe > button:hover:not(:disabled) { background:#9c526d; }
+.craft-recipe > button:disabled { cursor:default; background:#242630; border-color:#3e414e; color:#74767f; }
+.upgrade-section { padding:16px; background:linear-gradient(160deg,#221a20,#12141d); border:2px solid #4a4353; box-shadow:inset 0 0 30px #0004; }
+.upgrade-title { margin:5px 0 4px; font:16px 'Russo One'; }
+.upgrade-hint { margin:0 0 14px; color:#a7a3af; font-size:9px; line-height:1.5; }
+.upgrade-list { display:grid; gap:10px; }
+.upgrade-card { --accent:#c7a15f; padding:12px; background:linear-gradient(150deg,#191b26,#11131b); border:1px solid #3d404e; border-top:3px solid color-mix(in srgb,var(--accent) 70%,#444); }
+.upgrade-head { display:flex; align-items:center; gap:11px; }
+.upgrade-art { width:44px; min-width:44px; height:44px; display:grid; place-items:center; background:radial-gradient(circle,color-mix(in srgb,var(--accent) 20%,transparent),transparent 70%),#0f1119; border:1px solid #3c3f4d; color:var(--accent); font-size:24px; text-shadow:0 0 12px color-mix(in srgb,var(--accent) 55%,transparent); }
+.upgrade-head small { color:#8b8996; font-size:7px; letter-spacing:.09em; }
+.upgrade-head b { display:block; margin:3px 0 5px; font:12px 'Russo One'; }
+.upgrade-level { color:var(--accent); font-size:11px; }
+.upgrade-pips { display:flex; gap:3px; }
+.upgrade-pips i { width:14px; height:6px; background:#2a2c38; border:1px solid #43465353; }
+.upgrade-pips i.on { background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 80%,#000),var(--accent)); border-color:var(--accent); box-shadow:0 0 6px color-mix(in srgb,var(--accent) 50%,transparent); }
+.upgrade-cost { margin-top:10px; padding-top:9px; border-top:1px solid #33353f; }
+.upgrade-delta { display:flex; justify-content:space-between; align-items:baseline; gap:8px; color:#8f8d9c; font-size:8px; }
+.upgrade-delta b { font-size:8px; }
+.upgrade-delta .positive { color:#78c98d; }
+.upgrade-card button { width:100%; min-height:34px; margin-top:10px; background:#6e4a2c; border:2px solid #b3813f; color:#f3e6cf; font-size:8px; font-weight:700; letter-spacing:.05em; }
+.upgrade-card button:hover:not(:disabled) { background:#8a5c34; }
+.upgrade-card button:disabled { cursor:default; background:#242630; border-color:#3e414e; color:#74767f; }
+.upgrade-max { margin-top:10px; padding:8px; text-align:center; color:#77c78d; background:#12201a; border:1px dashed #3f6b52; font-size:8px; letter-spacing:.08em; }
+
+/* --- Bestiary panel --- */
+.bestiary-summary, .achievement-summary { display:flex; align-items:center; gap:16px; margin-bottom:18px; padding:14px 16px; background:#151722; border-left:4px solid #83556f; }
+.bestiary-summary strong, .achievement-summary strong { font:22px 'Russo One'; color:#e6dfe9; }
+.bestiary-summary strong em, .achievement-summary strong em { color:#8f8d9c; font:normal 12px 'Roboto Mono'; }
+.bestiary-kills { display:grid; gap:2px; text-align:right; }
+.bestiary-kills small { color:#8b8996; font-size:7px; letter-spacing:.13em; }
+.bestiary-kills b { color:#e6bc70; font:16px 'Russo One'; }
+.bestiary-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; }
+.beast-card { --tint:#8b8d97; display:grid; grid-template-rows:auto auto auto; gap:8px; padding:13px; background:linear-gradient(150deg,#181a24,#10121a); border:1px solid #3a3d4a; border-left:4px solid color-mix(in srgb,var(--tint) 65%,#3a3d4a); box-shadow:inset 0 0 24px #0003; }
+.beast-card.boss { border-left-color:#b0505f; box-shadow:inset 0 0 24px #0003,0 0 0 1px #7a3a4544; }
+.beast-card.locked { opacity:.82; border-left-style:dashed; }
+.beast-portrait { position:relative; display:flex; align-items:center; justify-content:space-between; }
+.beast-glyph { width:46px; height:46px; display:grid; place-items:center; background:radial-gradient(circle,color-mix(in srgb,var(--tint) 26%,transparent),transparent 68%),#0d0f16; border:1px solid color-mix(in srgb,var(--tint) 55%,#3a3d4a); color:color-mix(in srgb,var(--tint) 85%,#fff); font-size:24px; text-shadow:0 0 12px color-mix(in srgb,var(--tint) 55%,transparent); }
+.beast-card.boss .beast-glyph { color:#f0aeb9; }
+.beast-silhouette { width:46px; height:46px; display:grid; place-items:center; background:#0c0e15; border:1px dashed #454857; color:#565a68; font:26px 'Russo One'; filter:grayscale(1); }
+.beast-kills { color:#d7b36c; font:15px 'Russo One'; }
+.beast-body small { color:color-mix(in srgb,var(--tint) 75%,#8f8d9c); font-size:7px; letter-spacing:.1em; }
+.beast-body b { display:block; margin:3px 0 5px; font:13px 'Russo One'; color:#e7e2ea; }
+.beast-body p { margin:0; color:#9a99a6; font-size:8px; line-height:1.5; }
+.beast-stats { display:flex; gap:12px; padding:7px 0 0; border-top:1px solid #2f313b; }
+.beast-stats span { color:#a7a5b1; font-size:9px; }
+.beast-stats b { color:#e2dae4; }
+.beast-stats.locked-stats, .beast-weakness.locked-weakness { border-top:1px dashed #33353f; }
+.reveal-step { color:#726f7d; font-size:7px; font-style:italic; letter-spacing:.05em; }
+.beast-weakness { padding-top:7px; border-top:1px solid #2f313b; }
+.beast-weakness small { color:#c58a63; font-size:7px; letter-spacing:.12em; }
+.beast-weakness p { margin:3px 0 0; color:#c9b8ac; font-size:8px; line-height:1.5; }
+
+/* --- Achievements panel --- */
+.achievement-group { margin-bottom:16px; }
+.achievement-group-head { display:flex; justify-content:space-between; align-items:baseline; margin:0 0 9px; padding-bottom:6px; border-bottom:1px solid #33353f; }
+.achievement-group-head h3 { margin:0; font:13px 'Russo One'; letter-spacing:.06em; color:#cdc7d4; }
+.achievement-group-head span { color:#8f8d9c; font-size:9px; }
+.achievement-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+.achievement { display:grid; grid-template-columns:46px minmax(0,1fr) 22px; align-items:center; gap:11px; padding:11px; background:linear-gradient(145deg,#181a24,#11131b); border:1px solid #35323f; box-shadow:inset 0 0 20px #0003; opacity:.66; }
+.achievement.unlocked { opacity:1; border-color:#7a6a4e; background:linear-gradient(145deg,#221d18,#151119); }
+.achievement-icon { width:46px; height:46px; display:grid; place-items:center; background:#0d0f16; border:1px solid #474a57; color:#7f8291; font-size:22px; }
+.achievement.unlocked .achievement-icon { color:#e6c37e; border-color:#8a6f45; text-shadow:0 0 12px #d0a05a66; }
+.achievement.masked .achievement-icon { color:#5a5d6b; font-family:'Russo One'; }
+.achievement-copy { min-width:0; }
+.achievement-copy b { display:block; font:11px 'Russo One'; color:#ddd7e0; }
+.achievement.locked .achievement-copy b { color:#9a98a5; }
+.achievement-copy p { margin:3px 0 0; color:#918f9c; font-size:8px; line-height:1.45; }
+.achievement-state { text-align:center; font-size:12px; color:#6f7280; }
+.achievement.unlocked .achievement-state { color:#8ecb9c; }
+
+@media (max-width:850px), (pointer:coarse) {
+  .craft-layout { grid-template-columns:1fr; }
+  .craft-recipe { grid-template-columns:50px minmax(0,1fr); grid-template-rows:auto auto; }
+  .craft-icon { grid-row:1/3; }
+  .craft-recipe > button { grid-column:2; justify-self:start; min-width:120px; }
+  .bestiary-grid, .achievement-grid { grid-template-columns:1fr; }
+  .bestiary-summary, .achievement-summary { flex-wrap:wrap; }
+  .discovery-meter { order:3; flex-basis:100%; }
+}
+
+@media (max-width:520px) {
+  .craft-recipe { grid-template-columns:44px minmax(0,1fr); }
+  .craft-icon { width:44px; height:44px; font-size:22px; }
+  .boss-bar { width:calc(100vw - 20px); top:calc(96px + var(--safe-top)); padding:7px 11px 9px; }
+  .boss-bar strong { font-size:13px; }
+  .beast-body p { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+}
+
+/* Quality-low: drop the extra glows/blur these components add. */
+.quality-low .env-widget, .quality-low .confirm-overlay { backdrop-filter:none; }
+.quality-low .boss-bar, .quality-low .beast-card.boss, .quality-low .upgrade-pips i.on { box-shadow:5px 5px #0009; }
+.quality-low .hurt-vignette { box-shadow:none; }
+
+/* Reduced-motion: neutralize the one-shot flashes so nothing lingers mid-frame. */
+.reduce-motion .hurt-vignette.flash, .reduce-motion .combo-banner.shake, .reduce-motion .boss-bar.phase-shift .boss-track, .reduce-motion .death-screen.appear, .reduce-motion .death-screen.appear > div { animation:none !important; }
+
+/* ==========================================================================
+   Version 6: working quick-item slots (Z/X/V) + their inventory assign row.
+   Same dark-gothic register as the potion/ability bars they sit beside.
+   ========================================================================== */
+.quick-slots { position:absolute; left:calc(471px + var(--safe-left)); bottom:calc(18px + var(--safe-bottom)); display:flex; gap:6px; pointer-events:auto; }
+.quick-slot { --rarity:#4a4d5a; position:relative; width:44px; height:58px; padding:4px; display:grid; place-items:center; background:#141620; border:2px solid color-mix(in srgb,var(--rarity) 55%,#3f424f); box-shadow:4px 4px #0009; color:var(--rarity); }
+.quick-slot span { font-size:20px; color:var(--rarity); text-shadow:0 0 10px color-mix(in srgb,var(--rarity) 55%,transparent); }
+.quick-slot small { position:absolute; right:3px; bottom:2px; min-width:15px; height:15px; display:grid; place-items:center; border-radius:50%; background:#e9e4ed; color:#14151c; font-size:8px; }
+.quick-slot kbd { position:absolute; left:3px; top:3px; padding:1px 3px; font-size:6px; }
+.quick-slot.empty { color:#5a5d6a; border-style:dashed; box-shadow:none; }
+.quick-slot.empty span { color:#5a5d6a; text-shadow:none; }
+.quick-slot.empty small { display:none; }
+.quick-slot.exhausted { filter:grayscale(.7); opacity:.5; }
+.quick-slot:hover { border-color:var(--rarity); }
+
+/* Assign control inside a consumable's inventory card. */
+.quick-assign { margin-top:6px; display:flex; align-items:center; gap:7px; }
+.quick-assign small { color:#8b8c99; font-size:7px; letter-spacing:.08em; }
+.quick-assign-row { display:flex; gap:4px; }
+.quick-assign-btn { width:22px; height:22px; display:grid; place-items:center; background:#10121a; border:1px solid #3d4150; color:#9a9ba8; font:9px 'Russo One'; box-shadow:none; }
+.quick-assign-btn:hover { border-color:#6c6f80; color:#ded7df; }
+.quick-assign-btn.active { background:color-mix(in srgb,var(--rarity) 22%,#151720); border-color:var(--rarity); color:#fff; box-shadow:0 0 8px color-mix(in srgb,var(--rarity) 45%,transparent); }
+
+@media (max-width:850px), (pointer:coarse) {
+  /* Desktop anchor sits beside the (now-hidden) ability bar; on touch, tuck the
+     quick slots above the joystick at the bottom-left, smaller. */
+  .quick-slots { left:calc(24px + var(--safe-left)); bottom:calc(148px + var(--safe-bottom)); gap:5px; }
+  .quick-slot { width:40px; height:44px; }
+  .quick-slot span { font-size:18px; }
+}
+
+.quality-low .quick-slot span { text-shadow:none; }
+.quality-low .quick-assign-btn.active { box-shadow:none; }

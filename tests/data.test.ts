@@ -99,11 +99,28 @@ Object.defineProperty(globalThis, 'window', { value: globalThis });
 
 storage.set('trupy-save-v1', JSON.stringify({ version: 1, coins: 777, potions: 4, ownedWeapons: ['rustblade', 'witchbow'], equippedWeapon: 'witchbow', questProgress: { first_oath: { status: 'completed', objectiveIndex: 0, amount: 3 } }, settings: { sound: true, reducedMotion: false } }));
 const migrated = new SaveSystem().get();
-assert.equal(migrated.version, 2, 'Version 1 save migrates to version 2');
+assert.equal(migrated.version, 3, 'Version 1 save migrates to the current schema version');
 assert.equal(migrated.coins, 777, 'Migration preserves currency');
 assert.equal(migrated.equippedWeapon, 'witchbow', 'Migration preserves equipped weapon');
 assert.equal(migrated.inventory.find((stack) => stack.itemId === 'blood_vial')?.quantity, 4, 'Migration converts potions into inventory stacks');
 assert.equal(migrated.questProgress.first_oath.status, 'completed', 'Migration preserves quest progress');
+// v3 fields backfill from defaults when absent in an older save.
+assert.deepEqual(migrated.weaponUpgrades, {}, 'Migration backfills weapon upgrades');
+assert.deepEqual(migrated.bestiary, {}, 'Migration backfills the bestiary');
+assert.deepEqual(migrated.achievements, [], 'Migration backfills achievements');
+assert.equal(migrated.stats.totalKills, 0, 'Migration backfills skill stats');
+storage.clear();
+
+// A v2 save (no crafting/bestiary/achievement keys) also upgrades cleanly and
+// keeps its existing data, proving the v2 -> v3 path loses nothing.
+storage.set('trupy-save-v1', JSON.stringify({ version: 2, coins: 210, reputation: 6, ownedWeapons: ['rustblade', 'graveaxe'], equippedWeapon: 'graveaxe', inventory: [{ itemId: 'ash_crystal', quantity: 5 }], claimedTiers: [1, 2] }));
+const migratedV2 = new SaveSystem().get();
+assert.equal(migratedV2.version, 3, 'Version 2 save migrates to version 3');
+assert.equal(migratedV2.coins, 210, 'v2 migration preserves currency');
+assert.equal(migratedV2.equippedWeapon, 'graveaxe', 'v2 migration preserves equipped weapon');
+assert.equal(migratedV2.inventory.find((stack) => stack.itemId === 'ash_crystal')?.quantity, 5, 'v2 migration preserves inventory materials');
+assert.deepEqual(migratedV2.claimedTiers, [1, 2], 'v2 migration preserves claimed tiers');
+assert.deepEqual(migratedV2.weaponUpgrades, {}, 'v2 migration backfills weapon upgrades');
 storage.clear();
 
 const saves = new SaveSystem();

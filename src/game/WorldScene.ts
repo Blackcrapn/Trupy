@@ -2,19 +2,30 @@ import Phaser from 'phaser';
 import { BATTLE_PASS, ENEMIES, NPCS, QUESTS, WEAPONS, XP_FOR_LEVEL } from '../data/content';
 import { getItem } from '../data/items';
 import { getWeaponVisual } from '../data/weaponVisuals';
-import { BUILDINGS, LOCATIONS, MAP_ROADS, MAP_SHAPES, RIFT_POINTS, WORLD_HEIGHT, WORLD_WIDTH, getBuildingDoor } from '../data/world';
+import { BUILDINGS, HIDDEN_FORD, LOCATIONS, MAP_ROADS, MAP_SHAPES, RIFT_POINTS, RIVER_BRIDGES, SECRET_POINTS, SHORTCUT_PORTALS, WORLD_HEIGHT, WORLD_WIDTH, getBuildingDoor } from '../data/world';
+import type { LocationDefinition } from '../data/world';
 import { GameUI } from '../ui/GameUI';
 import { AudioManager, audio } from '../systems/AudioManager';
 import { InventorySystem } from '../systems/InventorySystem';
 import { QuestSystem } from '../systems/QuestSystem';
 import { SaveSystem } from '../systems/SaveSystem';
 import { WeaponShopSystem } from '../systems/WeaponShopSystem';
+import { CraftingSystem } from '../systems/CraftingSystem';
+import { BestiarySystem } from '../systems/BestiarySystem';
+import { AchievementSystem } from '../systems/AchievementSystem';
+import { ARCANE_LIGHT, FLAME_LIGHT, FORGE_LIGHT, LightingSystem, WINDOW_LIGHT } from '../systems/world/Lighting';
+import { WeatherSystem } from '../systems/world/Weather';
+import { HERO_DIRS, heroKey, type HeroDir, type HeroPose } from '../systems/sprites/hero';
+import { buildingKey } from '../systems/sprites/buildings';
+import { EnemyAI, type AIContext, type EnemyProjectileRequest } from '../systems/combat/EnemyAI';
+import { BossFight, type BossContext } from '../systems/combat/BossFight';
+import { detonateSmokeBomb } from '../systems/combat/SmokeBomb';
 import type { DialogueAction, DialoguePayload, HudSnapshot, ObjectiveType, PlayerSave, QuestDefinition, WeaponDefinition } from './types';
 import { GameEvents } from './events';
 
 const PLAYER_START = { x: 430, y: 585 };
 
-type InteractiveKind = 'npc' | 'collect' | 'lantern' | 'altar' | 'door' | 'chest' | 'shrine' | 'lift' | 'rift';
+type InteractiveKind = 'npc' | 'collect' | 'lantern' | 'altar' | 'door' | 'chest' | 'shrine' | 'lift' | 'rift' | 'secret' | 'note' | 'passage';
 
 interface InteractiveEntity {
   kind: InteractiveKind;
@@ -24,6 +35,14 @@ interface InteractiveEntity {
   object: Phaser.GameObjects.Sprite | Phaser.GameObjects.Image;
   objectiveType?: ObjectiveType;
   target?: string;
+  /** Hidden-until-approached: revealed by proximity, tracked for the map. */
+  secret?: boolean;
+  /** Lore/reward text shown on interaction (secrets and notes). */
+  lore?: string;
+  /** Destination for a `passage` teleport. */
+  destination?: { x: number; y: number };
+  /** What a secret hands over: loot chest, permanent buff, or lore note. */
+  secretKind?: 'chest' | 'shrine' | 'note';
 }
 
 interface EnemySpawn {
@@ -49,6 +68,22 @@ export class WorldScene extends Phaser.Scene {
   private quests!: QuestSystem;
   private inventory!: InventorySystem;
   private shop!: WeaponShopSystem;
+  private crafting!: CraftingSystem;
+  private bestiary!: BestiarySystem;
+  private achievements!: AchievementSystem;
+  private lighting!: LightingSystem;
+  private weather!: WeatherSystem;
+  /** Index of the player's own carried light in the lighting system. */
+  private playerLightIndex = -1;
+  private heroDir: HeroDir = 'down';
+  private heroPose: HeroPose = 'idle';
+  private heroPoseUntil = 0;
+  /** Timestamps used to detect a flawless boss kill. */
+  private bossFightStartedAt = 0;
+  private lastPlayerHurtAt = -1;
+  /** Last labels pushed to the HUD, so the event only fires on change. */
+  private lastTimeLabel = '';
+  private lastWeatherLabel = '';
   private readonly sfx: AudioManager = audio;
   private ui!: GameUI;
   private player!: Phaser.Physics.Arcade.Sprite;
@@ -76,6 +111,9 @@ export class WorldScene extends Phaser.Scene {
   private eventDisposers: Array<() => void> = [];
   private boss?: Phaser.Physics.Arcade.Sprite;
   private cinderBoss?: Phaser.Physics.Arcade.Sprite;
+  private namelessFight?: BossFight;
+  private cinderFight?: BossFight;
+  private enemyProjectiles!: Phaser.Physics.Arcade.Group;
   private activeRift?: RiftState;
   private playtimeAccumulator = 0;
   private lastStepAt = 0;
@@ -87,6 +125,16 @@ export class WorldScene extends Phaser.Scene {
   private isDashing = false;
   private lastSlowTickAt = 0;
   private requestedSpawn?: { x: number; y: number };
+
+  /** World anchors for each quest-objective target (marker + map objective pin). */
+  private static readonly OBJECTIVE_POINTS: Record<string, { x: number; y: number }> = {
+    moonwort: { x: 690, y: 740 }, husk: { x: 1820, y: 590 }, witchbow: { x: 1155, y: 610 }, boneguard: { x: 2240, y: 1120 },
+    shadebloom: { x: 1370, y: 1320 }, forest_altar: { x: 1660, y: 1580 }, ruins: { x: 2120, y: 1130 }, nameless: { x: 2280, y: 1330 },
+    charm: { x: 2030, y: 520 }, direwolf: { x: 1390, y: 1370 }, lantern: { x: 1590, y: 820 },
+    bog_reed: { x: 3250, y: 620 }, bogling: { x: 3280, y: 600 }, ferryman_cargo: { x: 3260, y: 2480 }, glowcap: { x: 3280, y: 700 },
+    mines: { x: 3500, y: 1420 }, cavecrawler: { x: 3570, y: 1500 }, miner_tools: { x: 3810, y: 1640 }, mine_lift: { x: 3595, y: 1450 },
+    citadel: { x: 4050, y: 1700 }, cinderlord: { x: 4200, y: 2420 },
+  };
 
   constructor() {
     super('WorldScene');
@@ -111,6 +159,9 @@ export class WorldScene extends Phaser.Scene {
     this.quests = new QuestSystem(this.saves);
     this.inventory = new InventorySystem(this.saves);
     this.shop = new WeaponShopSystem(this.saves);
+    this.crafting = new CraftingSystem(this.saves, this.inventory);
+    this.bestiary = new BestiarySystem(this.saves);
+    this.achievements = new AchievementSystem(this.saves);
     this.saves.mutate((save) => { save.currentScene = 'world'; }, true);
     this.sfx.setMix(this.audioMix(this.saves.get()));
     if (!this.sfx.isUnlocked()) void this.sfx.unlock();
@@ -119,6 +170,7 @@ export class WorldScene extends Phaser.Scene {
     this.solids = this.physics.add.staticGroup();
     this.enemies = this.physics.add.group();
     this.projectiles = this.physics.add.group({ maxSize: 40 });
+    this.enemyProjectiles = this.physics.add.group({ maxSize: 60 });
 
     this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.drawWorld();
@@ -127,6 +179,8 @@ export class WorldScene extends Phaser.Scene {
     this.createInteractables();
     this.createEnemies();
     this.createAtmosphere();
+    this.createLighting();
+    this.createWeather();
     this.createObjectiveMarker();
     this.setupPhysics();
     this.setupInput();
@@ -160,6 +214,7 @@ export class WorldScene extends Phaser.Scene {
     if (time > this.lastSlowTickAt + 72) {
       this.updateEnemies(time, time - this.lastSlowTickAt);
       this.updateInteractions();
+      this.updateSecretVisibility();
       this.updateLocation();
       this.updateObjectiveMarker();
       this.updateEnemyBars();
@@ -170,12 +225,83 @@ export class WorldScene extends Phaser.Scene {
     }
     this.player.setDepth(this.player.y / 10 + 20);
     this.syncHeldWeapon();
+
+    // Environment. The player's lantern tracks them so night has a moving pool
+    // of light rather than a uniformly dark screen.
+    this.lighting.update(delta);
+    this.lighting.moveLight(this.playerLightIndex, this.player.x, this.player.y);
+    this.weather.update(delta, this.currentRegionId());
+    this.sfx.setRain(this.weather.profile().rainVolume);
+    // Surface time-of-day and weather in the HUD, but only when the label
+    // actually changes — this fires every frame otherwise.
+    const timeLabel = this.lighting.getState().label;
+    const weatherLabel = this.weather.profile().label;
+    if (timeLabel !== this.lastTimeLabel || weatherLabel !== this.lastWeatherLabel) {
+      this.lastTimeLabel = timeLabel;
+      this.lastWeatherLabel = weatherLabel;
+      GameEvents.emit('environment', { time: timeLabel, weather: weatherLabel });
+    }
+
     this.playtimeAccumulator += delta;
     if (this.playtimeAccumulator > 450) {
       this.playtimeAccumulator = 0;
-      this.saves.mutate((save) => { save.playerPosition = { x: Math.round(this.player.x), y: Math.round(this.player.y) }; });
+      this.saves.mutate((save) => {
+        save.playerPosition = { x: Math.round(this.player.x), y: Math.round(this.player.y) };
+        save.dayProgress = this.lighting.getDayProgress();
+      });
       this.emitHud();
     }
+  }
+
+  /**
+   * Crafting a recipe. The panel gates its buttons on the same rules, but the
+   * system is re-checked here because it owns the truth.
+   */
+  private craftRecipe(recipeId: string): void {
+    const result = this.crafting.craft(recipeId);
+    if (result.ok) {
+      this.sfx.craft();
+      // CraftingSystem.craft already increments stats.itemsCrafted — counting it
+      // again here would double every craft.
+      for (const achievement of this.achievements.check('craft', {})) {
+        GameEvents.emit('toast', `Достижение: ${achievement.name}`);
+      }
+    } else {
+      this.sfx.ui('error');
+    }
+    GameEvents.emit('toast', result.message);
+    this.emitHud(true);
+  }
+
+  private upgradeWeapon(weaponId: string): void {
+    const result = this.crafting.upgradeWeapon(weaponId);
+    if (result.ok) {
+      this.sfx.craft();
+      const level = this.crafting.upgradeLevel(weaponId);
+      // Same as crafting: the system already bumped stats.weaponsUpgraded.
+      for (const achievement of this.achievements.check('upgrade', { level })) {
+        GameEvents.emit('toast', `Достижение: ${achievement.name}`);
+      }
+      // The held-weapon sprite reflects the equipped weapon, so refresh it.
+      this.syncHeldWeapon();
+    } else {
+      this.sfx.ui('error');
+    }
+    GameEvents.emit('toast', result.message);
+    this.emitHud(true);
+  }
+
+  /** Region id under the player, used by weather and ambience. */
+  private currentRegionId(): string {
+    for (const location of LOCATIONS) {
+      if (
+        this.player.x >= location.x && this.player.x <= location.x + location.w
+        && this.player.y >= location.y && this.player.y <= location.y + location.h
+      ) {
+        return location.ambience;
+      }
+    }
+    return 'village';
   }
 
   private drawWorld(): void {
@@ -185,14 +311,29 @@ export class WorldScene extends Phaser.Scene {
       ground.lineStyle(1, 0x567064, .045).lineBetween(0, y, WORLD_WIDTH, y);
     }
 
+    // Region polygons are cached as Phaser points so both the fill pass and the
+    // terrain-detail pass can reuse them without re-parsing the shape strings.
+    const regionPolys = new Map<string, Phaser.Geom.Point[]>();
     for (const location of LOCATIONS) {
       const shape = MAP_SHAPES.find((entry) => entry.id === location.id);
       const points = shape?.points.split(' ').map((pair) => { const [x, y] = pair.split(',').map(Number); return new Phaser.Geom.Point(x, y); }) ?? [
         new Phaser.Geom.Point(location.x, location.y), new Phaser.Geom.Point(location.x + location.w, location.y),
         new Phaser.Geom.Point(location.x + location.w, location.y + location.h), new Phaser.Geom.Point(location.x, location.y + location.h),
       ];
+      regionPolys.set(location.id, points);
       ground.fillStyle(location.color, 1).fillPoints(points, true);
-      ground.lineStyle(location.danger >= 2 ? 6 : 4, Phaser.Display.Color.IntegerToColor(location.color).brighten(18).color, .55).strokePoints(points, true);
+    }
+    // Soft biome blending: before the crisp borders go down, feather each region's
+    // colour a short way past its own outline so neighbours bleed into each other
+    // instead of meeting at a hard polygon cut.
+    this.blendRegionEdges(ground, regionPolys);
+    // Per-region ground texture (patches, mottling, a light directional gradient)
+    // so no biome reads as one flat fill.
+    for (const location of LOCATIONS) this.drawTerrainDetail(ground, location, regionPolys.get(location.id)!);
+    // Crisp lit border on top of the blend, so regions still read as distinct.
+    for (const location of LOCATIONS) {
+      const points = regionPolys.get(location.id)!;
+      ground.lineStyle(location.danger >= 2 ? 6 : 4, Phaser.Display.Color.IntegerToColor(location.color).brighten(18).color, .4).strokePoints(points, true);
     }
 
     const road = (points: Array<[number, number]>, width = 74, color = 0x574f43) => {
@@ -203,17 +344,18 @@ export class WorldScene extends Phaser.Scene {
       points.slice(1).forEach(([x, y]) => ground.lineTo(x, y));
       ground.strokePath();
     };
-    road([[410,620],[900,670],[1350,620],[1820,720],[2350,1120],[3250,1450],[4120,1860]], 78);
-    road([[900,670],[1080,1100],[1500,1380],[2140,1460],[3050,2350]], 42, 0x665d4d);
+    // The two river-crossing roads are routed through the bridge decks so the
+    // path visibly meets each span.
+    road([[410,620],[900,670],[1350,620],[1820,720],[2350,1120],[2630,1316],[3250,1450],[4120,1860]], 78);
+    road([[900,670],[1080,1100],[1500,1380],[2140,1460],[2630,1698],[3050,2350]], 42, 0x665d4d);
     road([[2330,1100],[3030,650],[3470,620]], 48, 0x4d5045);
     road([[3300,1450],[3180,2240],[3050,2350]], 46, 0x4f514b);
 
-    ground.fillStyle(0x213c49, 1).fillRect(2520, 0, 240, WORLD_HEIGHT);
-    ground.fillStyle(0x345968, .75);
-    for (let y = 35; y < WORLD_HEIGHT; y += 74) ground.fillRect(2540 + (y % 140) / 9, y, 170, 5);
-    ground.fillStyle(0x4b4036, 1).fillRect(2500, 930, 280, 70);
-    ground.fillStyle(0x6b5b48, 1);
-    for (let x = 2510; x < 2770; x += 28) ground.fillRect(x, 935, 18, 60);
+    // Elevation shading for the raised, rocky biomes, drawn under the river so a
+    // plateau edge never paints over water.
+    this.drawElevation(ground, regionPolys);
+    this.drawRiver(ground);
+    this.drawBridges();
 
     this.drawBuildings();
     this.drawCemetery();
@@ -233,59 +375,255 @@ export class WorldScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * A tiny deterministic PRNG. Terrain detail must look scattered but be
+   * identical every run (it's baked once), so we avoid Math.random here.
+   */
+  private seededRandom(seed: number): () => number {
+    let state = seed >>> 0;
+    return () => { state = (state * 1664525 + 1013904223) >>> 0; return state / 4294967296; };
+  }
+
+  /** Point-in-polygon test against a cached region outline. */
+  private pointInPoly(points: Phaser.Geom.Point[], x: number, y: number): boolean {
+    let inside = false;
+    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+      const xi = points[i].x, yi = points[i].y, xj = points[j].x, yj = points[j].y;
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+
+  /**
+   * Softens biome borders. For each region we scatter translucent blobs of the
+   * region's own colour just *outside* its outline, so the transition into the
+   * neighbour is a gradient of overlapping patches rather than a knife-edge.
+   */
+  private blendRegionEdges(ground: Phaser.GameObjects.Graphics, polys: Map<string, Phaser.Geom.Point[]>): void {
+    for (const location of LOCATIONS) {
+      const points = polys.get(location.id)!;
+      const random = this.seededRandom(0x9e37 ^ location.id.length * 2654435761);
+      const colour = Phaser.Display.Color.IntegerToColor(location.color);
+      const soft = colour.color;
+      // Walk each edge and drop feather blobs straddling it.
+      for (let i = 0; i < points.length; i += 1) {
+        const a = points[i];
+        const b = points[(i + 1) % points.length];
+        const steps = Math.max(3, Math.round(Phaser.Math.Distance.Between(a.x, a.y, b.x, b.y) / 120));
+        for (let s = 0; s <= steps; s += 1) {
+          const t = s / steps;
+          const px = a.x + (b.x - a.x) * t;
+          const py = a.y + (b.y - a.y) * t;
+          const jitterX = (random() - 0.5) * 90;
+          const jitterY = (random() - 0.5) * 90;
+          const r = 46 + random() * 46;
+          ground.fillStyle(soft, 0.16 + random() * 0.12).fillCircle(px + jitterX, py + jitterY, r);
+        }
+      }
+    }
+  }
+
+  /**
+   * Per-region ground texture: a faint directional light gradient, scattered
+   * darker/lighter patches, and a few biome-flavoured accents (moss, scorch,
+   * puddles). All clipped to the region polygon so nothing bleeds onto roads or
+   * neighbours, and all deterministic so it bakes identically each run.
+   */
+  private drawTerrainDetail(ground: Phaser.GameObjects.Graphics, location: LocationDefinition, points: Phaser.Geom.Point[]): void {
+    const random = this.seededRandom(0x51ed ^ (location.id.charCodeAt(0) * 40503 + location.h));
+    const base = Phaser.Display.Color.IntegerToColor(location.color);
+    const dark = base.clone().darken(20).color;
+    const light = base.clone().brighten(16).color;
+    // A soft top-left-to-bottom-right light gradient, faked with a few large,
+    // very translucent lit and shadowed lobes.
+    ground.fillStyle(light, 0.05).fillEllipse(location.x + location.w * 0.32, location.y + location.h * 0.3, location.w * 0.7, location.h * 0.6);
+    ground.fillStyle(dark, 0.06).fillEllipse(location.x + location.w * 0.72, location.y + location.h * 0.74, location.w * 0.6, location.h * 0.55);
+    // Mottled patches — try points, keep the ones that fall inside the polygon.
+    const accent = this.terrainAccent(location.id);
+    const patchCount = Math.round((location.w * location.h) / 26000);
+    let placed = 0;
+    let attempts = 0;
+    while (placed < patchCount && attempts < patchCount * 4) {
+      attempts += 1;
+      const x = location.x + random() * location.w;
+      const y = location.y + random() * location.h;
+      if (!this.pointInPoly(points, x, y)) continue;
+      placed += 1;
+      const roll = random();
+      const rx = 22 + random() * 46;
+      const ry = rx * (0.5 + random() * 0.35);
+      if (roll < 0.4) ground.fillStyle(dark, 0.12 + random() * 0.1).fillEllipse(x, y, rx, ry);
+      else if (roll < 0.72) ground.fillStyle(light, 0.08 + random() * 0.08).fillEllipse(x, y, rx * 0.8, ry * 0.8);
+      else ground.fillStyle(accent.color, accent.alpha * (0.6 + random() * 0.5)).fillEllipse(x, y, rx * 0.7, ry * 0.7);
+    }
+  }
+
+  /** Biome-specific ground accent colour used to tint scattered patches. */
+  private terrainAccent(id: string): { color: number; alpha: number } {
+    switch (id) {
+      case 'forest': return { color: 0x3f6b48, alpha: 0.18 };
+      case 'marsh': return { color: 0x2f6f5e, alpha: 0.2 };
+      case 'cemetery': return { color: 0x4a5560, alpha: 0.16 };
+      case 'ruins': return { color: 0x6a4d76, alpha: 0.18 };
+      case 'mines': return { color: 0x6b4f36, alpha: 0.2 };
+      case 'docks': return { color: 0x38637a, alpha: 0.2 };
+      case 'citadel': return { color: 0x7a3b34, alpha: 0.2 };
+      case 'village': return { color: 0x6d6142, alpha: 0.16 };
+      default: return { color: 0x4a5a48, alpha: 0.14 };
+    }
+  }
+
+  /**
+   * Elevation cues for the two raised, rocky biomes. A dark cast-shadow band
+   * hugs the *lower* edges of the mines and the citadel (reading as a cliff face
+   * dropping away), while a thin lit rim traces their *upper* edges (a plateau
+   * catching the sky). Cheap, but it lifts both regions off the flat plane.
+   */
+  private drawElevation(ground: Phaser.GameObjects.Graphics, polys: Map<string, Phaser.Geom.Point[]>): void {
+    for (const id of ['mines', 'citadel'] as const) {
+      const points = polys.get(id);
+      if (!points) continue;
+      // Draw each polygon edge: south/east-facing edges get a thick dark drop,
+      // north/west-facing edges get a lit rim.
+      for (let i = 0; i < points.length; i += 1) {
+        const a = points[i];
+        const b = points[(i + 1) % points.length];
+        // Outward normal sign via the edge direction; if the edge trends
+        // rightward/downward it's a lit top edge, else a shadowed underside.
+        const facingDown = b.x < a.x || (Math.abs(b.x - a.x) < 4 && b.y < a.y);
+        if (facingDown) {
+          ground.lineStyle(26, 0x0c0d12, 0.5).lineBetween(a.x, a.y + 10, b.x, b.y + 10);
+        } else {
+          ground.lineStyle(6, id === 'citadel' ? 0x8a4a44 : 0x9a7a50, 0.5).lineBetween(a.x, a.y - 4, b.x, b.y - 4);
+        }
+      }
+      // A couple of internal cliff-shelf lines for the mines to imply terraces.
+      if (id === 'mines') {
+        ground.lineStyle(10, 0x0c0d12, 0.35).lineBetween(3260, 1600, 3800, 1600);
+        ground.lineStyle(4, 0x9a7a50, 0.4).lineBetween(3260, 1592, 3800, 1592);
+      }
+    }
+  }
+
+  /**
+   * The river. Rather than a flat rectangle it now has: wet-earth banks, a
+   * lighter shallow margin, a darker deep channel, and a set of pale current
+   * streaks along the flow so the water reads as moving. Drawn once into the
+   * ground graphics.
+   */
+  private drawRiver(ground: Phaser.GameObjects.Graphics): void {
+    const left = 2500;
+    const right = 2760;
+    const width = right - left;
+    // Muddy banks a little wider than the water.
+    ground.fillStyle(0x2c3428, 1).fillRect(left - 26, 0, width + 52, WORLD_HEIGHT);
+    // Deep channel.
+    ground.fillStyle(0x18333f, 1).fillRect(left, 0, width, WORLD_HEIGHT);
+    // Shallows: lighter strips hugging each bank.
+    ground.fillStyle(0x2c5566, 0.7).fillRect(left, 0, 34, WORLD_HEIGHT);
+    ground.fillStyle(0x2c5566, 0.7).fillRect(right - 34, 0, 34, WORLD_HEIGHT);
+    // Deepest core line.
+    ground.fillStyle(0x102730, 0.6).fillRect(left + width * 0.4, 0, width * 0.2, WORLD_HEIGHT);
+    // Current: pale streaks that meander down the channel. Deterministic.
+    const random = this.seededRandom(0x1005cafe);
+    ground.fillStyle(0x3f6f80, 0.5);
+    for (let y = 20; y < WORLD_HEIGHT; y += 46) {
+      const x = left + 30 + (Math.sin(y * 0.02) * 0.5 + 0.5) * (width - 90) + (random() - 0.5) * 20;
+      ground.fillRect(x, y, 60 + random() * 60, 4);
+    }
+    // Faint foam glints near the shallows.
+    ground.fillStyle(0x8fb6c2, 0.16);
+    for (let y = 40; y < WORLD_HEIGHT; y += 120) {
+      ground.fillRect(left + 8 + random() * 16, y + random() * 40, 10, 3);
+      ground.fillRect(right - 24 + random() * 12, y + 60 + random() * 40, 10, 3);
+    }
+  }
+
+  /**
+   * The bridge decks and their collision. The river carries a solid wall along
+   * its whole length *except* the vertical gap each bridge (and the secret ford)
+   * leaves, so the only ways across are the crossings — which makes them matter.
+   */
+  private drawBridges(): void {
+    const left = 2492;
+    const right = 2768;
+    // Build the set of walkable gaps (bridges + the hidden ford).
+    const gaps = [
+      ...RIVER_BRIDGES.map((bridge) => ({ y: bridge.y, gap: bridge.gap })),
+      { y: HIDDEN_FORD.y, gap: HIDDEN_FORD.gap },
+    ].sort((a, b) => a.y - b.y);
+    // River collision: stack solid segments over the gaps.
+    let cursor = 0;
+    for (const { y, gap } of gaps) {
+      const top = y - gap;
+      if (top > cursor) this.addSolidRect((left + right) / 2, (cursor + top) / 2, right - left, top - cursor);
+      cursor = y + gap;
+    }
+    if (cursor < WORLD_HEIGHT) this.addSolidRect((left + right) / 2, (cursor + WORLD_HEIGHT) / 2, right - left, WORLD_HEIGHT - cursor);
+
+    // Bridge decks: sculpted plank tiles across the span, with stone abutments
+    // and rope-rail posts. Depth keyed just above the ground so the player walks
+    // on top of them.
+    for (const bridge of RIVER_BRIDGES) {
+      const deck = this.add.graphics().setDepth(bridge.y / 10 + 1);
+      // Stone abutments on each bank.
+      deck.fillStyle(0x4a4640, 1).fillRect(left - 20, bridge.y - bridge.gap - 6, 44, bridge.gap * 2 + 12);
+      deck.fillStyle(0x4a4640, 1).fillRect(right - 24, bridge.y - bridge.gap - 6, 44, bridge.gap * 2 + 12);
+      // Deck planks.
+      deck.fillStyle(0x6b5137, 1).fillRect(left, bridge.y - bridge.gap + 4, right - left, bridge.gap * 2 - 8);
+      for (let x = left + 4; x < right; x += 26) {
+        deck.fillStyle((x / 26) % 2 < 1 ? 0x745941 : 0x654b38, 1).fillRect(x, bridge.y - bridge.gap + 6, 20, bridge.gap * 2 - 12);
+      }
+      // Plank seams and rail shadow.
+      deck.lineStyle(3, 0x2c2620, 0.7);
+      for (let x = left; x <= right; x += 26) deck.lineBetween(x, bridge.y - bridge.gap + 6, x, bridge.y + bridge.gap - 6);
+      // Rope rails.
+      deck.fillStyle(0x3a3029, 1).fillRect(left, bridge.y - bridge.gap - 2, right - left, 8).fillRect(left, bridge.y + bridge.gap - 6, right - left, 8);
+      const name = this.add.text(bridge.x, bridge.y - bridge.gap - 22, bridge.name, {
+        fontFamily: 'monospace', fontSize: '10px', color: '#d9cdbe', backgroundColor: '#11131acc', padding: { x: 5, y: 2 },
+      }).setOrigin(0.5).setDepth(bridge.y / 10 + 2).setAlpha(0.8);
+      name.setData('bridgeLabel', bridge.id);
+    }
+
+    // Stepping stones marking the secret ford (hidden by reeds in scatter pass).
+    const fordGraphics = this.add.graphics().setDepth(HIDDEN_FORD.y / 10 + 1);
+    for (let x = left + 20; x < right; x += 46) {
+      fordGraphics.fillStyle(0x54514a, 1).fillEllipse(x, HIDDEN_FORD.y + (x % 92 === 0 ? 14 : -10), 26, 16);
+      fordGraphics.fillStyle(0x6a675e, 1).fillEllipse(x - 3, HIDDEN_FORD.y + (x % 92 === 0 ? 11 : -13), 14, 8);
+    }
+  }
+
+  /**
+   * Places the sculpted building sprites and their collision.
+   *
+   * The art is baked as one texture per building by the sprites/buildings
+   * factory, with the wall body centred in the canvas — so drawing the image at
+   * the building's own (x, y) lands the walls exactly on the collision boxes
+   * below, while roofs and eaves overhang into the surrounding margin.
+   *
+   * The collision layout is deliberately unchanged from the previous flat
+   * version: an upper solid block plus two lower blocks that leave a walkable
+   * doorway gap, so every door stays enterable.
+   */
   private drawBuildings(): void {
-    BUILDINGS.forEach((building, index) => {
-      const { x, y, w, h, wall, roof, name, doorX, style } = building;
-      const graphics = this.add.graphics().setDepth((y + h / 2) / 10 + 5);
-      const left = x - w / 2;
+    BUILDINGS.forEach((building) => {
+      const { x, y, w, h, name, doorX } = building;
       const top = y - h / 2;
       const bottom = y + h / 2;
+      const left = x - w / 2;
       const doorCenter = x + doorX;
-      const highlight = Phaser.Display.Color.IntegerToColor(wall).brighten(14).color;
-      graphics.fillStyle(0x07090f, .58).fillRect(left + 12, top + 16, w + 5, h + 12);
-      graphics.fillStyle(0x252730, 1).fillRect(left - 5, bottom - 13, w + 10, 18);
-      graphics.fillStyle(wall, 1).fillRect(left, top, w, h);
-      graphics.fillStyle(highlight, .28).fillRect(left + 8, top + 39, w - 16, 8);
-      graphics.lineStyle(4, 0x171821, 1).strokeRect(left, top, w, h);
 
-      if (style === 'chapel') {
-        graphics.fillStyle(roof, 1).fillTriangle(left - 14, top + 26, x, top - 42, left + w + 14, top + 26);
-        graphics.fillStyle(0x262833, 1).fillRect(x - 26, top - 46, 52, 46);
-        graphics.fillStyle(0xa79ab2, 1).fillRect(x - 4, top - 38, 8, 27); graphics.fillRect(x - 14, top - 29, 28, 8);
-      } else if (style === 'citadel') {
-        graphics.fillStyle(roof, 1).fillRect(left - 14, top - 18, w + 28, 54);
-        for (let bx = left - 8; bx < left + w; bx += 38) graphics.fillStyle(0x6c454a, 1).fillRect(bx, top - 32, 22, 20);
-        graphics.fillStyle(0xd05a43, .8).fillCircle(left + 34, top + 9, 12); graphics.fillCircle(left + w - 34, top + 9, 12);
-      } else if (style === 'warehouse') {
-        graphics.fillStyle(roof, 1).fillRect(left - 14, top - 18, w + 28, 58);
-        for (let rx = left - 8; rx < left + w + 8; rx += 22) graphics.lineStyle(3, 0x171821, .8).lineBetween(rx, top - 15, rx, top + 36);
-        graphics.fillStyle(0x77533b, 1).fillRect(left + 12, bottom - 61, 62, 48);
-      } else if (style === 'marsh') {
-        graphics.fillStyle(roof, 1).fillRect(left - 12, top - 14, w + 24, 50);
-        for (let rx = left - 8; rx < left + w; rx += 26) graphics.fillStyle(index % 2 ? 0x334039 : 0x29342f, 1).fillRect(rx, top - 17 + (rx % 3), 18, 53);
-        graphics.fillStyle(0x63826f, .7).fillRect(left + 9, top + 47, w - 18, 5);
-      } else {
-        graphics.fillStyle(roof, 1).fillRect(left - 13, top - 17, w + 26, style === 'inn' ? 58 : 49);
-        for (let tx = left; tx < left + w; tx += style === 'forge' ? 34 : 29) graphics.lineStyle(4, 0x171821, .9).lineBetween(tx, top + 29, tx + 21, top - 13);
-        if (style === 'forge') {
-          graphics.fillStyle(0x34282a, 1).fillRect(left + w - 46, top - 50, 24, 55);
-          graphics.fillStyle(0xe66c48, .7).fillCircle(left + w - 34, top - 48, 7);
-        }
-        if (style === 'inn') graphics.fillStyle(0xa87245, .65).fillRect(left + 10, top + 46, w - 20, 12);
+      const key = buildingKey(building.id);
+      if (this.textures.exists(key)) {
+        // Depth keyed off the building's foot so the player passes in front of
+        // the wall but behind the roof overhang.
+        this.add.image(x, y, key).setDepth(bottom / 10 + 5);
       }
 
-      graphics.fillStyle(0x211a1d, 1).fillRect(doorCenter - 21, bottom - 54, 42, 54);
-      graphics.lineStyle(3, building.interior ? 0xb9809d : 0x58545a, 1).strokeRect(doorCenter - 21, bottom - 54, 42, 54);
-      graphics.fillStyle(building.interior ? 0xe2b45f : 0x756b61, 1).fillCircle(doorCenter + 12, bottom - 28, 3);
-      const windowColor = style === 'forge' || style === 'citadel' ? 0xd98253 : style === 'marsh' ? 0x6fb394 : 0x82a5aa;
-      const windowPositions = w > 220 ? [left + 28, left + w - 66] : [left + 25];
-      windowPositions.forEach((wx) => {
-        if (Math.abs(wx + 18 - doorCenter) < 50) return;
-        graphics.fillStyle(0x9b744d, 1).fillRect(wx, y - 12, 38, 31);
-        graphics.fillStyle(windowColor, 1).fillRect(wx + 5, y - 7, 28, 21);
-        graphics.lineStyle(2, 0x30313b, 1).lineBetween(wx + 19, y - 7, wx + 19, y + 14);
-      });
-      this.add.text(x, top - (style === 'chapel' ? 55 : 27), name, { fontFamily: 'monospace', fontSize: '10px', color: '#ded8e1', backgroundColor: '#11131acc', padding: { x: 6, y: 3 } }).setOrigin(.5).setDepth((bottom) / 10 + 7);
+      this.add.text(x, top - 34, name, {
+        fontFamily: 'monospace', fontSize: '10px', color: '#ded8e1',
+        backgroundColor: '#11131acc', padding: { x: 6, y: 3 },
+      }).setOrigin(.5).setDepth(bottom / 10 + 7);
 
       const doorwayWidth = 64;
       const lowerHeight = 52;
@@ -297,11 +635,10 @@ export class WorldScene extends Phaser.Scene {
       if (rightWidth > 4) this.addSolidRect(doorCenter + doorwayWidth / 2 + rightWidth / 2, bottom - lowerHeight / 2, rightWidth, lowerHeight);
     });
 
-    const well = this.add.graphics().setDepth(74);
-    well.fillStyle(0x171821, 1).fillEllipse(920, 690, 84, 46);
-    well.fillStyle(0x66626a, 1).fillEllipse(920, 680, 78, 42);
-    well.fillStyle(0x1d2930, 1).fillEllipse(920, 678, 54, 27);
-    well.lineStyle(4, 0x262733, 1).strokeEllipse(920, 680, 78, 42);
+    // The village well, now a sculpted prop rather than stacked ellipses.
+    if (this.textures.exists('well')) {
+      this.add.image(920, 680, 'well').setScale(1.6).setDepth(74);
+    }
     this.addSolidRect(920, 683, 66, 34);
   }
 
@@ -438,28 +775,88 @@ export class WorldScene extends Phaser.Scene {
       const [ax, ay] = road[index];
       return distanceToSegment(x, y, ax, ay, bx, by) < margin;
     }));
-    const addTree = (x: number, y: number, scale = 2.1) => {
-      const tree = this.add.image(x, y, 'tree').setScale(scale).setDepth(y / 10 + 8);
-      tree.setTint(Phaser.Display.Color.GetColor(210 + Math.floor(random() * 30), 220 + Math.floor(random() * 20), 215 + Math.floor(random() * 30)));
+    // Variant keys give visible silhouette variety; the sculpted art is already
+    // shaded, so it must NOT be tinted — tinting flattens the light and shadow
+    // the shading pass produced.
+    const pick = (base: string, count: number) => `${base}-${Math.floor(random() * count)}`;
+    const addTree = (x: number, y: number, scale = 2.1, kind = 'tree') => {
+      const key = pick(kind, 3);
+      const texture = this.textures.exists(key) ? key : kind;
+      this.add.image(x, y, texture).setScale(scale).setDepth(y / 10 + 8);
       this.addSolidRect(x, y + 34 * scale / 2, 18 * scale, 15 * scale);
     };
+    const addProp = (x: number, y: number, key: string, scale = 1.4, depthBias = 1) => {
+      if (!this.textures.exists(key)) return;
+      this.add.image(x, y, key).setScale(scale).setDepth(y / 10 + depthBias);
+    };
+
+    // Whispering Forest: dense broadleaf.
     for (let index = 0; index < 50; index += 1) {
       const x = 790 + random() * 1020;
       const y = 950 + random() * 720;
       if (Math.abs(y - (1000 + (x - 800) * .4)) < 90 || nearRoad(x, y, 145)) continue;
       addTree(x, y, 1.8 + random() * .55);
     }
-    for (let index = 0; index < 55; index += 1) {
+    // Wilderness fill, with dead trees near the cursed regions so the biome
+    // shifts as the player travels east.
+    for (let index = 0; index < 60; index += 1) {
       const x = 90 + random() * (WORLD_WIDTH - 180);
       const y = 80 + random() * (WORLD_HEIGHT - 160);
       const inLocation = LOCATIONS.some((location) => x > location.x - 50 && x < location.x + location.w + 50 && y > location.y - 50 && y < location.y + location.h + 50);
-      if (!inLocation && !nearRoad(x, y, 145)) addTree(x, y, 1.7 + random() * .5);
+      if (inLocation || nearRoad(x, y, 145)) continue;
+      const kind = x > 2700 ? 'tree-dead' : x > 1900 ? 'tree-pine' : 'tree';
+      addTree(x, y, 1.7 + random() * .5, kind);
     }
-    for (let index = 0; index < 65; index += 1) {
+    // Rocks and rubble.
+    for (let index = 0; index < 70; index += 1) {
       const x = 100 + random() * (WORLD_WIDTH - 200);
       const y = 100 + random() * (WORLD_HEIGHT - 200);
       if (nearRoad(x, y, 105)) continue;
-      this.add.image(x, y, 'rock').setScale(1.3 + random() * .8).setAlpha(.82).setDepth(y / 10 + 1);
+      addProp(x, y, random() > .78 ? pick('rubble', 3) : pick('rock', 3), 1.3 + random() * .8);
+    }
+    // Ground cover, so open areas aren't bare.
+    for (let index = 0; index < 90; index += 1) {
+      const x = 120 + random() * (WORLD_WIDTH - 240);
+      const y = 120 + random() * (WORLD_HEIGHT - 240);
+      if (nearRoad(x, y, 60)) continue;
+      const roll = random();
+      const key = roll > .72 ? pick('bush', 3) : roll > .5 ? 'fern' : roll > .34 ? 'flower-patch' : 'stump';
+      addProp(x, y, key, 1.1 + random() * .5);
+    }
+    // Region-specific dressing. Each list is placed only inside its own biome so
+    // the world tells you where you are without reading a label.
+    const marshProps = ['reeds', 'lilypad', 'puddle', 'bog-bubble', 'mushroom-cluster'];
+    for (let index = 0; index < 40; index += 1) {
+      addProp(2800 + random() * 980, 200 + random() * 760, marshProps[Math.floor(random() * marshProps.length)], 1.2 + random() * .5);
+    }
+    const citadelProps = ['ash-pile', 'cracked-ground', 'bones', 'skull', 'rubble-1'];
+    for (let index = 0; index < 34; index += 1) {
+      addProp(3900 + random() * 560, 1460 + random() * 1180, citadelProps[Math.floor(random() * citadelProps.length)], 1.2 + random() * .5);
+    }
+    const mineProps = ['ore-vein', 'mine-track', 'rubble-2', 'crate', 'bones'];
+    for (let index = 0; index < 26; index += 1) {
+      addProp(3270 + random() * 560, 1170 + random() * 620, mineProps[Math.floor(random() * mineProps.length)], 1.2 + random() * .4);
+    }
+    const dockProps = ['crate', 'barrel', 'sack', 'chain', 'bridge-plank'];
+    for (let index = 0; index < 28; index += 1) {
+      addProp(2740 + random() * 960, 2060 + random() * 620, dockProps[Math.floor(random() * dockProps.length)], 1.2 + random() * .4);
+    }
+    const ruinProps = ['obelisk', 'statue', 'rubble-0', 'bones', 'cracked-ground'];
+    for (let index = 0; index < 24; index += 1) {
+      addProp(2160 + random() * 690, 1090 + random() * 820, ruinProps[Math.floor(random() * ruinProps.length)], 1.2 + random() * .4);
+    }
+    // Village life: fences, hay, a cart, a signpost.
+    for (let index = 0; index < 22; index += 1) {
+      addProp(720 + random() * 700, 340 + random() * 600, random() > .5 ? 'fence-post' : 'hay-bale', 1.2 + random() * .3);
+    }
+    addProp(1040, 700, 'cart', 1.5, 3);
+    addProp(880, 600, 'signpost', 1.4, 3);
+    addProp(1180, 470, 'anvil', 1.3, 3);
+    addProp(1240, 470, 'forge-fire', 1.4, 4);
+    // Camps along the roads give the world a sense of other travellers.
+    for (const [x, y] of [[1500, 1330], [2400, 1290], [3180, 2240]] as const) {
+      addProp(x, y, 'campfire', 1.5, 3);
+      addProp(x + 42, y + 12, 'tent', 1.6, 2);
     }
   }
 
@@ -467,6 +864,26 @@ export class WorldScene extends Phaser.Scene {
     const zone = this.add.zone(x, y, width, height);
     this.physics.add.existing(zone, true);
     this.solids.add(zone);
+  }
+
+  /** Small stable string hash, used to pick a deterministic secret-chest reward. */
+  private hashString(value: string): number {
+    let hash = 0;
+    for (let i = 0; i < value.length; i += 1) hash = (hash * 31 + value.charCodeAt(i)) | 0;
+    return hash;
+  }
+
+  /** Ids of hidden places the player has discovered, for the map overlay. */
+  private discoveredSecretIds(): string[] {
+    const flags = this.saves.get().flags;
+    const ids: string[] = [];
+    for (const secret of SECRET_POINTS) if (flags[`secret-found:${secret.id}`]) ids.push(secret.id);
+    for (const shortcut of SHORTCUT_PORTALS) {
+      if (flags[`secret-found:${shortcut.id}_a`]) ids.push(`${shortcut.id}_a`);
+      if (flags[`secret-found:${shortcut.id}_b`]) ids.push(`${shortcut.id}_b`);
+    }
+    if (flags['secret-found:reed_ford']) ids.push('reed_ford');
+    return ids;
   }
 
   private createPlayer(): void {
@@ -557,7 +974,54 @@ export class WorldScene extends Phaser.Scene {
       if (!complete) this.tweens.add({ targets: image, scale: { from: 1.9, to: 2.45 }, angle: 180, alpha: { from: .62, to: 1 }, duration: 1300 + index * 170, yoyo: true, repeat: -1 });
       this.interactables.push({ kind: 'rift', id: rift.id, uniqueId: `rift:${rift.id}`, label: complete ? 'Разлом очищен' : `Активировать: ${rift.name}`, object: image, target: rift.reward });
     });
+    this.createSecrets();
     this.syncInteractables();
+  }
+
+  /**
+   * Off-road discoveries. Each secret and shortcut mouth starts nearly invisible
+   * and fades in only when the player is close (see updateSecretVisibility), so
+   * they reward wandering off the paths rather than following the roads. Once
+   * found, discovery persists in the save so the map can reveal them.
+   */
+  private createSecrets(): void {
+    SECRET_POINTS.forEach((secret) => {
+      const uniqueId = `secret:${secret.id}`;
+      const looted = Boolean(this.saves.get().flags[uniqueId]);
+      const found = Boolean(this.saves.get().flags[`secret-found:${secret.id}`]);
+      // Only actual chest props flip to the open texture once looted; a crypt or
+      // obelisk keeps its own art (the loot came from "inside" it).
+      const isChestProp = secret.texture === 'chest-closed';
+      const texture = looted && isChestProp ? 'chest-open' : this.textures.exists(secret.texture) ? secret.texture : 'altar';
+      const image = this.add.image(secret.x, secret.y, texture).setScale(secret.kind === 'note' ? 1.9 : 2.1).setDepth(secret.y / 10 + 5);
+      image.setAlpha(found ? 1 : 0.05);
+      if (secret.kind === 'shrine') image.setTint(looted ? 0x666570 : 0x9e76c2);
+      const label = secret.kind === 'chest'
+        ? (looted ? 'Тайник пуст' : 'Открыть тайник')
+        : secret.kind === 'shrine'
+          ? (looted ? 'Святилище молчит' : 'Коснуться святилища')
+          : (looted ? 'Осмотрено' : 'Осмотреть');
+      this.interactables.push({
+        kind: 'secret', id: secret.id, uniqueId, label, object: image,
+        secret: true, secretKind: secret.kind, lore: secret.lore,
+      });
+    });
+
+    SHORTCUT_PORTALS.forEach((shortcut) => {
+      const texture = this.textures.exists(shortcut.texture) ? shortcut.texture : 'crypt-entrance';
+      (['a', 'b'] as const).forEach((side) => {
+        const foundKey = `secret-found:${shortcut.id}_${side}`;
+        const found = Boolean(this.saves.get().flags[foundKey]);
+        const here = shortcut[side];
+        const there = side === 'a' ? shortcut.b : shortcut.a;
+        const image = this.add.image(here.x, here.y, texture).setScale(2.1).setDepth(here.y / 10 + 5);
+        image.setAlpha(found ? 1 : 0.05);
+        this.interactables.push({
+          kind: 'passage', id: `${shortcut.id}_${side}`, uniqueId: `passage:${shortcut.id}_${side}`,
+          label: shortcut.name, object: image, secret: true, destination: { ...there },
+        });
+      });
+    });
   }
 
   private startRift(riftId: string): void {
@@ -655,6 +1119,13 @@ export class WorldScene extends Phaser.Scene {
       lastSpecial: 0,
       spawn,
     });
+    // Elite roll happens before the health bar is created so the bar reads the
+    // buffed maximum. Night raises the elite rate, which makes darkness matter.
+    if (spawn.type !== 'nameless' && spawn.type !== 'cinderlord') {
+      EnemyAI.rollElite(enemy, { chanceMult: this.lighting?.getState().danger ?? 1 });
+      const marker = EnemyAI.createEliteMarker(this, enemy);
+      if (marker) enemy.setData('eliteMarker', marker);
+    }
     const body = enemy.body as Phaser.Physics.Arcade.Body;
     body.setSize(enemy.width * .55, enemy.height * .52).setOffset(enemy.width * .22, enemy.height * .42);
     const bar = this.add.graphics().setDepth(enemy.depth + 2).setVisible(false);
@@ -696,6 +1167,73 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Places every light in the world. Lights are static apart from the player's
+   * own lantern, which follows them so night travel has a readable bubble of
+   * safety rather than being uniformly dark.
+   */
+  private createLighting(): void {
+    const save = this.saves.get();
+    const low = save.settings.quality === 'low'
+      || (save.settings.quality === 'auto' && this.scale.width < 700);
+    this.lighting = new LightingSystem(this);
+    this.lighting.create();
+    // A full cycle takes 12 minutes of play — long enough that night feels like
+    // an event, short enough that a player sees several in one session.
+    this.lighting.setDayLength(720);
+    this.lighting.setDayProgress(save.dayProgress ?? 0.34);
+
+    // The player's carried lantern.
+    this.lighting.addLight({ x: this.player.x, y: this.player.y, radius: 150, ...FLAME_LIGHT, intensity: 0.6 });
+    this.playerLightIndex = 0;
+
+    if (low) {
+      // On weak hardware keep only the player light — the tint still sells night.
+      return;
+    }
+
+    // Windows of inhabited buildings.
+    for (const building of BUILDINGS) {
+      if (!building.interior) continue;
+      this.lighting.addLight({ x: building.x, y: building.y + 6, radius: 170, ...WINDOW_LIGHT });
+    }
+    // The forge burns hotter and is visible from across the village.
+    this.lighting.addLight({ x: 1210, y: 500, radius: 230, ...FORGE_LIGHT });
+    // Village lanterns and the well.
+    for (const [x, y] of [[920, 690], [1010, 520], [860, 760], [1150, 700]] as const) {
+      this.lighting.addLight({ x, y, radius: 130, ...FLAME_LIGHT, intensity: 0.62, nightOnly: true });
+    }
+    // Rifts bleed arcane light whether or not it's night.
+    for (const rift of RIFT_POINTS) {
+      this.lighting.addLight({ x: rift.x, y: rift.y, radius: 200, ...ARCANE_LIGHT });
+    }
+    // Citadel braziers.
+    for (const [x, y] of [[4020, 1900], [4240, 1900], [4130, 2300]] as const) {
+      this.lighting.addLight({ x, y, radius: 190, ...FORGE_LIGHT, intensity: 0.7 });
+    }
+    // Cemetery grave candles — sparse and cold.
+    for (const [x, y] of [[1600, 410], [1880, 420], [2070, 735]] as const) {
+      this.lighting.addLight({ x, y, radius: 96, color: 0x9fb0dc, intensity: 0.4, flicker: 0.2, nightOnly: true });
+    }
+    // Dock and mine work lights.
+    this.lighting.addLight({ x: 3020, y: 2270, radius: 175, ...FLAME_LIGHT, intensity: 0.6 });
+    this.lighting.addLight({ x: 3595, y: 1450, radius: 150, ...FLAME_LIGHT, intensity: 0.55 });
+  }
+
+  private createWeather(): void {
+    const save = this.saves.get();
+    const low = save.settings.quality === 'low'
+      || (save.settings.quality === 'auto' && this.scale.width < 700);
+    this.weather = new WeatherSystem(this);
+    this.weather.create(885, low ? 'low' : 'high');
+    this.weather.onThunderStrike(() => {
+      this.sfx.thunder();
+      // Lightning briefly lights the whole scene.
+      this.lighting.flash(this.player.x, this.player.y, 520, 0xc8d4ee, 320);
+    });
+    this.weather.rollForRegion('village');
+  }
+
   private createObjectiveMarker(): void {
     const ring = this.add.ellipse(0, 0, 46, 22, 0xc26d90, .16).setStrokeStyle(3, 0xd79bb4, .8);
     const glyph = this.add.text(0, -34, '⌄', { fontFamily: 'monospace', fontSize: '30px', fontStyle: 'bold', color: '#f0b7ce', stroke: '#14151c', strokeThickness: 5 }).setOrigin(.5);
@@ -717,12 +1255,47 @@ export class WorldScene extends Phaser.Scene {
       this.damageEnemy(enemy, this.weaponDamageAgainst(enemy, weapon, Number(projectile.getData('damage') ?? 0)));
       projectile.destroy();
     });
+
+    // Enemy projectiles are their own group: they must not collide with other
+    // enemies, and they hit the player instead.
+    this.physics.add.collider(this.enemyProjectiles, this.solids, (object) => object.destroy());
+    this.physics.add.overlap(this.enemyProjectiles, this.player, (projectileObject) => {
+      const projectile = projectileObject as Phaser.Physics.Arcade.Sprite;
+      if (!projectile.active || !this.player.active) return;
+      this.hurtPlayer(Number(projectile.getData('damage') ?? 10));
+      const kind = String(projectile.getData('kind') ?? 'fire');
+      this.lighting.flash(projectile.x, projectile.y, 90, kind === 'fire' ? 0xff8a4c : 0xa06ce0, 200);
+      projectile.destroy();
+    });
+  }
+
+  /**
+   * Spawns a projectile fired by an enemy. Shared by the ranged archetype and by
+   * both boss fights so there is a single code path for enemy ordnance.
+   */
+  private spawnEnemyProjectile(request: EnemyProjectileRequest): void {
+    const texture = request.kind === 'fire' ? 'projectile-magic' : 'projectile-bolt';
+    const projectile = this.physics.add.sprite(request.x, request.y, texture);
+    const direction = new Phaser.Math.Vector2(request.targetX - request.x, request.targetY - request.y);
+    if (direction.lengthSq() < 0.01) direction.set(0, 1);
+    direction.normalize();
+    projectile
+      .setScale(request.kind === 'fire' ? 2 : 1.8)
+      .setRotation(direction.angle())
+      .setTint(request.kind === 'fire' ? 0xff9a52 : 0xb07ce8)
+      .setDepth(projectile.y / 10 + 22);
+    // Generous ttl: the projectile should cross the arena, then expire.
+    projectile.setData({ damage: request.damage, kind: request.kind, ttl: 2600 });
+    projectile.setVelocity(direction.x * request.speed, direction.y * request.speed);
+    this.enemyProjectiles.add(projectile);
   }
 
   private setupInput(): void {
     if (!this.input.keyboard) return;
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.keys = this.input.keyboard.addKeys('W,A,S,D,E,F,Q,I,M,B,R,SHIFT,ESC,SPACE,ONE,TWO,THREE,FOUR,FIVE,SIX,SEVEN,EIGHT') as Record<string, Phaser.Input.Keyboard.Key>;
+    // Z/X/V drive the three consumable quick slots. 4/5/6 would collide with the
+    // weapon hotbar, which already owns 1-8.
+    this.keys = this.input.keyboard.addKeys('W,A,S,D,E,F,Q,I,M,B,R,C,K,J,Z,X,V,SHIFT,ESC,SPACE,ONE,TWO,THREE,FOUR,FIVE,SIX,SEVEN,EIGHT') as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       if (!this.uiLocked && pointer.leftButtonDown()) this.attack(pointer);
     });
@@ -753,6 +1326,21 @@ export class WorldScene extends Phaser.Scene {
     this.listen<void>('ui-interact', () => { if (!this.uiLocked) this.interact(); });
     this.listen<void>('ui-heal', () => this.usePotion());
     this.listen<string>('equip', (weaponId) => this.equipWeapon(weaponId));
+    this.listen<string>('craft-recipe', (recipeId) => this.craftRecipe(recipeId));
+    this.listen<string>('upgrade-weapon', (weaponId) => this.upgradeWeapon(weaponId));
+    this.listen<number>('use-quick-slot', (index) => this.useQuickSlot(index));
+    this.listen<{ itemId?: string; slot?: number }>('assign-quick-slot', ({ itemId, slot }) => {
+      if (itemId && typeof slot === 'number' && this.inventory.setQuickSlot(slot, itemId)) {
+        this.sfx.ui();
+        this.emitHud(true);
+      }
+    });
+    this.listen<number>('clear-quick-slot', (slot) => {
+      if (this.inventory.clearQuickSlot(slot)) {
+        this.sfx.ui();
+        this.emitHud(true);
+      }
+    });
     this.listen<string>('equip-item', (itemId) => { if (this.inventory.equip(itemId)) { this.sfx.ui(); this.emitHud(true); } });
     this.listen<string>('use-item', (itemId) => this.useInventoryItem(itemId));
     this.listen<{ itemId?: string; direction?: 'toChest' | 'toInventory' }>('transfer-item', ({ itemId, direction }) => {
@@ -822,18 +1410,10 @@ export class WorldScene extends Phaser.Scene {
         this.emitTutorial();
         GameEvents.emit('toast', 'Движение освоено');
       }
-      if (Math.abs(input.x) > Math.abs(input.y)) {
-        this.player.play('hero-walk-side', true).setFlipX(input.x < 0);
-      } else if (input.y < 0) {
-        this.player.play('hero-walk-up', true).setFlipX(false);
-      } else {
-        this.player.play('hero-walk-down', true).setFlipX(false);
-      }
+      this.setHeroAnimation('walk', input.x, input.y);
     } else {
       this.player.setVelocity(0);
-      this.player.anims.stop();
-      const direction = Math.abs(this.facing.x) > Math.abs(this.facing.y) ? 'side' : this.facing.y < 0 ? 'up' : 'down';
-      this.player.setTexture(`hero-${direction}-0`).setFlipX(direction === 'side' && this.facing.x < 0);
+      this.setHeroAnimation('idle', this.facing.x, this.facing.y);
     }
 
     if (Phaser.Input.Keyboard.JustDown(this.keys.E)) this.interact();
@@ -845,7 +1425,13 @@ export class WorldScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.keys.I)) GameEvents.emit('panel-open', 'inventory');
     if (Phaser.Input.Keyboard.JustDown(this.keys.M)) GameEvents.emit('panel-open', 'map');
     if (Phaser.Input.Keyboard.JustDown(this.keys.B)) GameEvents.emit('panel-open', 'pass');
+    if (Phaser.Input.Keyboard.JustDown(this.keys.C)) GameEvents.emit('panel-open', 'craft');
+    if (Phaser.Input.Keyboard.JustDown(this.keys.K)) GameEvents.emit('panel-open', 'bestiary');
+    if (Phaser.Input.Keyboard.JustDown(this.keys.J)) GameEvents.emit('panel-open', 'achievements');
     if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) GameEvents.emit('panel-open', 'pause');
+    ['Z', 'X', 'V'].forEach((key, index) => {
+      if (Phaser.Input.Keyboard.JustDown(this.keys[key])) this.useQuickSlot(index);
+    });
     const weaponKeys = ['ONE','TWO','THREE','FOUR','FIVE','SIX','SEVEN','EIGHT'];
     weaponKeys.forEach((key, index) => {
       if (Phaser.Input.Keyboard.JustDown(this.keys[key])) {
@@ -855,6 +1441,48 @@ export class WorldScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * Chooses the hero animation from a movement/facing vector.
+   *
+   * The art has five sculpted directions; the three that face right are mirrored
+   * for left, which is why only x is flipped. Transient poses (attack, dash,
+   * hurt) hold for a short window so a single frame isn't immediately overwritten
+   * by the walk cycle on the next update.
+   */
+  private setHeroAnimation(pose: HeroPose, dx: number, dy: number): void {
+    if (this.heroPose !== pose && this.time.now < this.heroPoseUntil) return;
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+    let dir: HeroDir;
+    if (absX < 0.001 && absY < 0.001) {
+      dir = this.heroDir;
+    } else if (absX > absY * 2.2) {
+      dir = 'side';
+    } else if (absY > absX * 2.2) {
+      dir = dy < 0 ? 'up' : 'down';
+    } else {
+      dir = dy < 0 ? 'up-side' : 'down-side';
+    }
+    this.heroDir = dir;
+    this.heroPose = pose;
+    const flip = dir !== 'up' && dir !== 'down' && dx < 0;
+    const animKey = `hero-${dir}-${pose}`;
+    if (this.anims.exists(animKey)) {
+      this.player.play(animKey, true);
+    } else {
+      this.player.anims.stop();
+      this.player.setTexture(heroKey(dir, pose, 0));
+    }
+    this.player.setFlipX(flip);
+  }
+
+  /** Play a one-shot pose (attack/dash/hurt) and lock it for `holdMs`. */
+  private playHeroPose(pose: HeroPose, holdMs: number): void {
+    this.heroPoseUntil = 0;
+    this.setHeroAnimation(pose, this.facing.x, this.facing.y);
+    this.heroPoseUntil = this.time.now + holdMs;
+  }
+
   private dash(): void {
     if (this.time.now < this.dashReadyAt || this.uiLocked || this.isDashing) return;
     const direction = this.mobileMove.lengthSq() > .05 ? this.mobileMove.clone().normalize() : this.facing.clone().normalize();
@@ -862,7 +1490,8 @@ export class WorldScene extends Phaser.Scene {
     this.dashReadyAt = this.time.now + 1800;
     this.isDashing = true;
     this.hurtReadyAt = this.time.now + 420;
-    this.sfx.attack('ranged');
+    this.sfx.dash();
+    this.playHeroPose('dash', 240);
     if (!this.saves.get().tutorialDone && this.saves.get().flags.tutorialMoved && this.saves.get().flags.tutorialAttacked && !this.saves.get().flags.tutorialDashed) {
       this.saves.mutate((save) => { save.flags.tutorialDashed = true; }, true);
       this.emitTutorial();
@@ -883,7 +1512,16 @@ export class WorldScene extends Phaser.Scene {
     if (this.time.now < this.specialReadyAt || this.uiLocked) return;
     const weapon = WEAPONS.find((item) => item.id === this.saves.get().equippedWeapon) ?? WEAPONS[0];
     this.specialReadyAt = this.time.now + (weapon.kind === 'melee' ? 4800 : weapon.kind === 'ranged' ? 5200 : 6200);
-    this.sfx.attack(weapon.kind === 'magic' ? 'magic' : weapon.kind);
+    this.sfx.special(weapon.kind);
+    this.playHeroPose('attack', 300);
+    // The ability lights the area from the player outward.
+    this.lighting.flash(
+      this.player.x,
+      this.player.y,
+      weapon.kind === 'melee' ? 200 : 260,
+      Phaser.Display.Color.HexStringToColor(weapon.accent).color,
+      480,
+    );
     if (!this.saves.get().tutorialDone && this.saves.get().flags.tutorialDashed && !this.saves.get().flags.tutorialSpecial) {
       this.saves.mutate((save) => { save.flags.tutorialSpecial = true; }, true);
       this.emitTutorial();
@@ -929,7 +1567,11 @@ export class WorldScene extends Phaser.Scene {
       if (direction.lengthSq() > 16) direction.normalize(); else direction.copy(this.facing);
       this.facing.copy(direction);
     }
-    this.sfx.attack(weapon.kind);
+    // Heavy weapons get the weightier swing sound; the threshold matches the
+    // cooldown at which a swing reads as a commitment rather than a jab.
+    if (weapon.cooldown >= 600) this.sfx.heavyAttack(weapon.kind);
+    else this.sfx.attack(weapon.kind);
+    this.playHeroPose('attack', Math.min(220, weapon.cooldown * 0.6));
     this.heldWeapon?.setScale(1.8).setTint(Phaser.Display.Color.HexStringToColor(weapon.accent).color);
     this.time.delayedCall(130, () => this.heldWeapon?.setScale(1.45).clearTint());
     if (weapon.kind === 'melee') this.meleeAttack(weapon, direction);
@@ -980,19 +1622,67 @@ export class WorldScene extends Phaser.Scene {
 
   private damageEnemy(enemy: Phaser.Physics.Arcade.Sprite, damage: number): void {
     if (!enemy.active) return;
+    // A wraith mid-blink and a boss mid-phase-transition cannot be hurt — both
+    // are deliberate windows the player has to wait out.
+    if (EnemyAI.isIntangible(enemy) || enemy.getData('bossInvulnerable')) return;
+    // Shieldbearers soak frontal damage, so the player must flank them.
+    damage = EnemyAI.mitigateDamage(enemy, damage, this.player.x, this.player.y);
     if (this.time.now > this.comboExpires) this.comboHits = 0;
     this.comboHits += 1;
     this.comboExpires = this.time.now + 1900;
     const comboMultiplier = 1 + Math.min(10, this.comboHits - 1) * .025;
-    const finalDamage = Math.round(damage * comboMultiplier);
+    // Crits are earned, not random: a long combo raises the chance, which rewards
+    // pressing an advantage instead of trading single hits.
+    const critChance = 0.06 + Math.min(0.22, this.comboHits * 0.02);
+    const critical = Math.random() < critChance;
+    const finalDamage = Math.round(damage * comboMultiplier * (critical ? 1.85 : 1));
     const health = Math.max(0, Number(enemy.getData('health')) - finalDamage);
+    const type = String(enemy.getData('type'));
     enemy.setData('health', health);
+    // Bosses need their own damage feed to drive phase transitions and the bar.
+    if (type === 'nameless') {
+      this.namelessFight?.onDamaged(health);
+      GameEvents.emit('boss-health', { health, phase: Number(enemy.getData('bossPhase')) || 1 });
+    } else if (type === 'cinderlord') {
+      this.cinderFight?.onDamaged(health);
+      GameEvents.emit('boss-health', { health, phase: Number(enemy.getData('bossPhase')) || 1 });
+    }
     GameEvents.emit('combo', { hits: this.comboHits, multiplier: comboMultiplier });
-    enemy.setTintFill(0xf5d5df);
-    this.time.delayedCall(90, () => { if (enemy.active) enemy.clearTint(); });
-    const number = this.add.text(enemy.x, enemy.y - 38, `-${finalDamage}`, { fontFamily: 'monospace', fontSize: '12px', fontStyle: 'bold', color: '#ffd2dc', stroke: '#15161d', strokeThickness: 4 }).setOrigin(.5).setDepth(900);
-    this.tweens.add({ targets: number, y: number.y - 28, alpha: 0, duration: 580, onComplete: () => number.destroy() });
-    this.sfx.hit();
+    if (this.comboHits > (this.saves.get().stats.bestCombo ?? 0)) {
+      this.saves.mutate((save) => { save.stats.bestCombo = this.comboHits; });
+      this.achievements.check('combo', { streak: this.comboHits });
+    }
+
+    // Hit flash plus a small knock-back nudge: the enemy visibly reacts.
+    enemy.setTintFill(critical ? 0xfff0d0 : 0xf5d5df);
+    this.time.delayedCall(critical ? 130 : 90, () => { if (enemy.active) enemy.clearTint(); });
+    const knock = new Phaser.Math.Vector2(enemy.x - this.player.x, enemy.y - this.player.y).normalize();
+    enemy.setVelocity(knock.x * (critical ? 190 : 110), knock.y * (critical ? 190 : 110));
+
+    const number = this.add.text(enemy.x, enemy.y - 38, critical ? `${finalDamage}!` : `-${finalDamage}`, {
+      fontFamily: 'monospace',
+      fontSize: critical ? '17px' : '12px',
+      fontStyle: 'bold',
+      color: critical ? '#ffe9a8' : '#ffd2dc',
+      stroke: '#15161d',
+      strokeThickness: critical ? 5 : 4,
+    }).setOrigin(.5).setDepth(900);
+    this.tweens.add({
+      targets: number,
+      y: number.y - (critical ? 40 : 28),
+      alpha: 0,
+      scale: critical ? 1.35 : 1,
+      duration: critical ? 720 : 580,
+      ease: 'Quad.easeOut',
+      onComplete: () => number.destroy(),
+    });
+
+    if (critical) {
+      // Crits get their own light pop and a harder shake so they land.
+      this.lighting.flash(enemy.x, enemy.y, 110, 0xffdca0, 220);
+      this.cameras.main.shake(95, .004);
+    }
+    this.sfx.impact(type, critical ? 1.4 : 1, critical);
     if (health <= 0) this.killEnemy(enemy);
   }
 
@@ -1006,8 +1696,39 @@ export class WorldScene extends Phaser.Scene {
     const depth = enemy.depth;
     const bar = enemy.getData('healthBar') as Phaser.GameObjects.Graphics | undefined;
     bar?.destroy();
-    this.saves.mutate((save) => { save.coins += coins; });
+    (enemy.getData('eliteMarker') as Phaser.GameObjects.Text | undefined)?.destroy();
+    // Elites drop more, which is the reward for the harder fight.
+    const lootMultiplier = Number(enemy.getData('lootMult')) || 1;
+    // Note: BestiarySystem.recordKill already increments totalKills and bossKills,
+    // so only the coin counter is tracked here to avoid double-counting.
+    this.saves.mutate((save) => {
+      save.coins += coins;
+      save.stats.coinsEarned += coins;
+    });
     const update = this.quests.record('kill', type, 1);
+    const isBoss = type === 'nameless' || type === 'cinderlord';
+
+    // Bestiary and achievements. Recording the kill here (rather than in the UI)
+    // keeps progression truthful even if a panel is never opened.
+    const killCount = this.bestiary.recordKill(type);
+    if (killCount === 1) {
+      GameEvents.emit('toast', `Бестиарий: ${definition.name} изучен`);
+    }
+    if (isBoss) {
+      // A flawless boss kill means no damage taken since the fight started.
+      if (this.bossFightStartedAt > 0 && this.lastPlayerHurtAt < this.bossFightStartedAt) {
+        this.saves.mutate((save) => { save.stats.flawlessBossKills += 1; });
+        this.achievements.check('boss_flawless', { enemyId: type });
+        GameEvents.emit('toast', 'Безупречная победа');
+      }
+      this.bossFightStartedAt = 0;
+      this.sfx.setBossFight(false);
+    }
+    const unlocked = this.achievements.check('kill', { enemyId: type });
+    for (const achievement of unlocked) {
+      GameEvents.emit('toast', `Достижение: ${achievement.name}`);
+    }
+    this.achievements.check('coins', { total: this.saves.get().stats.coinsEarned });
     const color = type === 'nameless' ? 0xd77ac7 : type === 'cinderlord' || type === 'ashborn' ? 0xff7549 : type === 'bogling' ? 0x7bdaa7 : 0xc09a7b;
     for (let index = 0; index < 7; index += 1) {
       const puff = this.add.image(deathX + Phaser.Math.Between(-18, 18), deathY + Phaser.Math.Between(-12, 12), index % 2 ? 'spark' : 'pixel').setScale(Phaser.Math.FloatBetween(2, 5)).setTint(color).setDepth(depth + 3);
@@ -1016,18 +1737,30 @@ export class WorldScene extends Phaser.Scene {
     enemy.destroy();
     for (const drop of definition.drops ?? []) {
       if (Math.random() > drop.chance) continue;
-      const quantity = Phaser.Math.Between(drop.min, drop.max);
+      const quantity = Phaser.Math.Between(drop.min, drop.max) * lootMultiplier;
       this.inventory.add(drop.itemId, quantity, true);
       this.sfx.pickup();
       GameEvents.emit('loot', { itemId: drop.itemId, quantity });
     }
-    this.sfx.coin();
+    this.sfx.coin(isBoss ? 4 : 1);
+    this.sfx.enemyDeath(type, isBoss);
+    if (isBoss) {
+      // A boss death is worth a moment: heavy shake and a big light bloom.
+      this.cameras.main.shake(420, .009);
+      this.lighting.flash(deathX, deathY, 420, type === 'cinderlord' ? 0xff8a4c : 0xd77ac7, 700);
+    }
     GameEvents.emit('toast', `+${coins} золота • ${definition.name} повержен`);
     if (update.readyQuest) this.sfx.quest();
     if (spawn.riftId) this.onRiftEnemyKilled(spawn.riftId);
     else if (!spawn.temporary && type !== 'nameless' && type !== 'cinderlord') this.time.delayedCall(11000, () => this.spawnEnemy(spawn));
     else if (type === 'nameless') this.boss = undefined;
     else if (type === 'cinderlord') this.cinderBoss = undefined;
+    if (isBoss) {
+      // Tear the choreography down or its timers keep firing after the kill.
+      if (type === 'nameless') { this.namelessFight?.destroy(); this.namelessFight = undefined; }
+      else { this.cinderFight?.destroy(); this.cinderFight = undefined; }
+      GameEvents.emit('boss-defeated');
+    }
     this.onQuestProgress(update);
     this.emitHud(true);
   }
@@ -1039,16 +1772,35 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     let combat = false;
+    // Context is built once per tick and reused for every enemy — the AI runs for
+    // up to 30 sprites, so allocating per enemy here would be wasteful.
+    const settings = this.saves.get().settings;
+    const lowQuality = settings.quality === 'low' || (settings.quality === 'auto' && this.scale.width < 700);
+    const context: AIContext = {
+      playerX: this.player.x,
+      playerY: this.player.y,
+      playerAlive: this.player.active,
+      time,
+      delta: _delta,
+      // Fog genuinely hides the player, and night makes everything bolder.
+      visibility: this.weather.profile().visibility,
+      danger: this.lighting.getState().danger,
+      reducedMotion: settings.reducedMotion,
+      lowQuality,
+      hurtPlayer: (amount) => this.hurtPlayer(amount),
+      spawnProjectile: (request) => this.spawnEnemyProjectile(request),
+      spawnAdd: (type, x, y) => {
+        this.spawnEnemy({ type: type as keyof typeof ENEMIES, x, y, temporary: true });
+      },
+      enemies: this.enemies.getChildren() as Phaser.Physics.Arcade.Sprite[],
+    };
+    const renderDistance = lowQuality ? 900 : 1450;
+
     this.enemies.children.each((child) => {
       const enemy = child as Phaser.Physics.Arcade.Sprite;
       if (!enemy.active) return null;
       const distance = Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y);
-      const aggro = Number(enemy.getData('aggro'));
-      const speed = Number(enemy.getData('speed'));
-      const homeX = Number(enemy.getData('homeX'));
-      const homeY = Number(enemy.getData('homeY'));
       const body = enemy.body as Phaser.Physics.Arcade.Body;
-      const renderDistance = this.saves.get().settings.quality === 'low' ? 900 : 1450;
       enemy.setVisible(distance < renderDistance);
       const healthBar = enemy.getData('healthBar') as Phaser.GameObjects.Graphics | undefined;
       if (distance >= renderDistance) {
@@ -1056,23 +1808,19 @@ export class WorldScene extends Phaser.Scene {
         healthBar?.setVisible(false);
         return null;
       }
-      if (distance < aggro) {
-        combat = true;
-        this.physics.moveToObject(enemy, this.player, speed);
-        enemy.setFlipX(body.velocity.x < 0);
-        this.tryEnemySpecial(enemy, time, distance);
-        if (distance < 42 + enemy.displayWidth * .18 && time > Number(enemy.getData('lastAttack')) + 850) {
-          enemy.setData('lastAttack', time);
-          this.hurtPlayer(Number(enemy.getData('damage')));
-        }
-      } else {
-        const homeDistance = Phaser.Math.Distance.Between(enemy.x, enemy.y, homeX, homeY);
-        if (homeDistance > 55) this.physics.moveTo(enemy, homeX, homeY, speed * .48);
-        else body.setVelocity(Math.sin((time + homeX) * .001) * 8, Math.cos((time + homeY) * .0012) * 8);
-      }
+      // Archetype behaviour lives in EnemyAI; bosses opt out and are driven by
+      // their BossFight instead.
+      if (EnemyAI.update(enemy, context)) combat = true;
       enemy.setDepth(enemy.y / 10 + 12);
+      const marker = enemy.getData('eliteMarker') as Phaser.GameObjects.Text | undefined;
+      if (marker) marker.setPosition(enemy.x, enemy.y - enemy.displayHeight * 0.62).setDepth(enemy.depth + 3);
       return null;
     });
+
+    // Boss choreography runs on the same cadence as the mook AI.
+    this.namelessFight?.update(time, _delta);
+    this.cinderFight?.update(time, _delta);
+
     if (combat !== this.currentCombat) {
       this.currentCombat = combat;
       this.sfx.setCombat(combat);
@@ -1136,11 +1884,20 @@ export class WorldScene extends Phaser.Scene {
     this.hurtReadyAt = this.time.now + 650;
     const reduced = Math.max(1, amount - this.inventory.armor());
     this.saves.mutate((save) => { save.health = Math.max(0, save.health - reduced); });
+    this.lastPlayerHurtAt = this.time.now;
+    // Combos break when you get hit — that's the risk that makes them meaningful.
+    this.comboHits = 0;
+    GameEvents.emit('combo', { hits: 0, multiplier: 1 });
+    this.playHeroPose('hurt', 260);
     this.player.setTintFill(0xe45d78);
     this.time.delayedCall(110, () => this.player.clearTint());
-    this.cameras.main.shake(130, .006);
+    // Feedback scales with how dangerous the hit was relative to max health.
+    const severity = reduced / Math.max(1, this.inventory.maxHealth(this.saves.get()));
+    this.cameras.main.shake(130 + severity * 320, .006 + severity * 0.012);
     this.cameras.main.flash(70, 120, 16, 38);
-    this.sfx.hit();
+    this.sfx.playerHurt(1 + Math.min(0.6, severity * 3));
+    // Screen-edge vignette in the DOM layer, scaled by how bad the hit was.
+    GameEvents.emit('player-hurt', { severity: Math.min(1, severity * 3.2) });
     if (this.saves.get().health <= 0) this.die();
     this.emitHud(true);
   }
@@ -1148,6 +1905,9 @@ export class WorldScene extends Phaser.Scene {
   private die(): void {
     this.player.setActive(false).setVelocity(0).setTint(0x6e5a67);
     this.physics.world.pause();
+    this.sfx.playerDeath();
+    this.sfx.setBossFight(false);
+    this.bossFightStartedAt = 0;
     GameEvents.emit('death');
   }
 
@@ -1168,6 +1928,17 @@ export class WorldScene extends Phaser.Scene {
     this.useInventoryItem('blood_vial');
   }
 
+  /** Fires whatever consumable sits in a quick slot, if anything does. */
+  private useQuickSlot(index: number): void {
+    const itemId = this.inventory.quickSlots()[index];
+    if (!itemId) {
+      this.sfx.ui('error');
+      GameEvents.emit('toast', 'Слот пуст');
+      return;
+    }
+    this.useInventoryItem(itemId);
+  }
+
   private useInventoryItem(itemId: string): void {
     if (this.uiLocked && this.player.active && !document.querySelector('#screen-panel[aria-hidden="false"]')) return;
     const result = this.inventory.use(itemId);
@@ -1178,28 +1949,36 @@ export class WorldScene extends Phaser.Scene {
       const glow = this.add.circle(this.player.x, this.player.y, 22, 0xc95c78, .5).setDepth(this.player.depth - 1);
       this.tweens.add({ targets: glow, radius: 70, alpha: 0, duration: 620, onComplete: () => glow.destroy() });
     } else if (result.effect === 'smoke') {
-      this.enemies.children.each((child) => {
-        const enemy = child as Phaser.Physics.Arcade.Sprite;
-        if (enemy.active && Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y) < 180) {
-          const direction = new Phaser.Math.Vector2(enemy.x - this.player.x, enemy.y - this.player.y).normalize();
-          enemy.setVelocity(direction.x * 260, direction.y * 260);
-        }
-        return null;
+      // The bomb now blinds as well as pushes: enemies inside the cloud lose
+      // aggro and cannot re-acquire the player until it thins, which makes the
+      // item a genuine escape tool rather than a small shove.
+      const settings = this.saves.get().settings;
+      const lowQuality = settings.quality === 'low'
+        || (settings.quality === 'auto' && this.scale.width < 700);
+      detonateSmokeBomb(this, {
+        x: this.player.x,
+        y: this.player.y,
+        enemies: this.enemies.getChildren() as Phaser.Physics.Arcade.Sprite[],
+        reducedMotion: settings.reducedMotion,
+        lowQuality,
+        depth: this.player.depth + 2,
       });
-      const smoke = this.add.circle(this.player.x, this.player.y, 35, 0x777184, .55).setDepth(this.player.depth + 2);
-      this.tweens.add({ targets: smoke, radius: 150, alpha: 0, duration: 850, onComplete: () => smoke.destroy() });
+      this.sfx.special('magic');
+      this.lighting.flash(this.player.x, this.player.y, 120, 0x8b8791, 320);
     }
     this.emitHud(true);
   }
 
   private updateProjectiles(delta: number): void {
-    this.projectiles.children.each((child) => {
+    const tick = (child: Phaser.GameObjects.GameObject): null => {
       const projectile = child as Phaser.Physics.Arcade.Sprite;
       const ttl = Number(projectile.getData('ttl')) - delta;
       projectile.setData('ttl', ttl);
       if (ttl <= 0) projectile.destroy();
       return null;
-    });
+    };
+    this.projectiles.children.each(tick);
+    this.enemyProjectiles.children.each(tick);
   }
 
   private updateInteractions(): void {
@@ -1216,6 +1995,43 @@ export class WorldScene extends Phaser.Scene {
       this.nearest = nearest;
       GameEvents.emit('prompt', { text: nearest?.label });
     }
+  }
+
+  /**
+   * Fades a hidden secret or shortcut mouth in once the player wanders within
+   * reach of it, marking it discovered so it survives reloads and appears on the
+   * map. Fog shrinks the reveal radius, so bad weather genuinely hides things.
+   */
+  private updateSecretVisibility(): void {
+    if (!this.player.active) return;
+    const reveal = 190 * (this.weather?.profile().visibility ?? 1);
+    let discoveredAny = false;
+    // The hidden ford has no prop — it's a bare gap in the river — so discovery is
+    // a plain proximity check that just flips its map flag.
+    if (!this.saves.get().flags['secret-found:reed_ford'] && Phaser.Math.Distance.Between(this.player.x, this.player.y, HIDDEN_FORD.x, HIDDEN_FORD.y) < reveal) {
+      this.saves.mutate((save) => { save.flags['secret-found:reed_ford'] = true; }, true);
+      this.sfx.quest();
+      GameEvents.emit('toast', `Найден ${HIDDEN_FORD.name}: реку можно перейти вброд`);
+      discoveredAny = true;
+    }
+    for (const entity of this.interactables) {
+      if (!entity.secret) continue;
+      // Secrets and passage mouths are both keyed by their entity id.
+      const foundKey = `secret-found:${entity.id}`;
+      if (this.saves.get().flags[foundKey]) { entity.object.setAlpha(1); continue; }
+      const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, entity.object.x, entity.object.y);
+      if (distance < reveal) {
+        this.saves.mutate((save) => { save.flags[foundKey] = true; }, true);
+        this.tweens.add({ targets: entity.object, alpha: 1, duration: 520, ease: 'Quad.easeOut' });
+        const glow = this.add.circle(entity.object.x, entity.object.y, 24, 0xd7c07a, .4).setDepth(entity.object.depth + 1);
+        this.tweens.add({ targets: glow, radius: 120, alpha: 0, duration: 900, onComplete: () => glow.destroy() });
+        this.sfx.quest();
+        const label = entity.kind === 'passage' ? 'Найден тайный проход' : 'Найдено скрытое место';
+        GameEvents.emit('toast', `${label}: ${entity.kind === 'passage' ? entity.label : entity.lore?.split('.')[0] ?? entity.label}`);
+        discoveredAny = true;
+      }
+    }
+    if (discoveredAny) this.emitHud(true);
   }
 
   private interact(): void {
@@ -1269,6 +2085,55 @@ export class WorldScene extends Phaser.Scene {
       this.emitHud(true);
       return;
     }
+    if (entity.kind === 'passage') {
+      if (!entity.destination) return;
+      this.sfx.door();
+      this.cameras.main.fadeOut(240, 6, 8, 14);
+      const target = entity.destination;
+      this.time.delayedCall(250, () => {
+        this.player.setPosition(target.x, target.y).setVelocity(0);
+        this.cameras.main.fadeIn(260, 6, 8, 14);
+        this.lighting.flash(target.x, target.y, 150, 0x8b7bc0, 400);
+      });
+      GameEvents.emit('toast', `${entity.label}: путь сокращён`);
+      this.nearest = undefined;
+      GameEvents.emit('prompt', {});
+      return;
+    }
+    if (entity.kind === 'secret') {
+      if (this.saves.get().flags[entity.uniqueId]) { GameEvents.emit('toast', entity.secretKind === 'note' ? 'Здесь больше нечего узнать' : 'Здесь уже пусто'); return; }
+      this.saves.mutate((save) => { save.flags[entity.uniqueId] = true; }, true);
+      if (entity.secretKind === 'chest') {
+        if (entity.object.texture.key === 'chest-closed') entity.object.setTexture('chest-open');
+        // Hidden caches pay better than roadside chests: a rarer item plus coins.
+        const pool = ['ash_crystal', 'greater_vial', 'smoke_bomb', 'mine_ore', 'bone_shard'];
+        const itemId = pool[Math.abs(this.hashString(entity.id)) % pool.length];
+        const quantity = itemId === 'bone_shard' || itemId === 'mine_ore' ? 4 : 2;
+        this.inventory.add(itemId, quantity, true);
+        this.saves.mutate((save) => { save.coins += 120; }, true);
+        this.sfx.chest();
+        GameEvents.emit('loot', { itemId, quantity });
+        GameEvents.emit('toast', `${entity.lore ?? 'Тайник найден'} • +120 золота`);
+      } else if (entity.secretKind === 'shrine') {
+        // A distinct buff from the roadside shrines: a lasting damage blessing.
+        entity.object.setTint(0x666570);
+        this.saves.mutate((save) => { save.maxHealth += 15; save.health = this.inventory.maxHealth(save); }, true);
+        this.sfx.quest();
+        const ring = this.add.circle(entity.object.x, entity.object.y, 30, 0x7fd6c0, .5).setDepth(entity.object.depth + 1);
+        this.tweens.add({ targets: ring, radius: 150, alpha: 0, duration: 950, onComplete: () => ring.destroy() });
+        GameEvents.emit('toast', `${entity.lore ?? 'Древнее святилище'} • жизненная сила +15`);
+      } else {
+        // Lore note: a snippet of story plus a small material reward.
+        this.inventory.add('ash_crystal', 1, true);
+        this.sfx.ui();
+        GameEvents.emit('loot', { itemId: 'ash_crystal', quantity: 1 });
+        GameEvents.emit('toast', entity.lore ?? 'Найдена старая запись');
+      }
+      this.nearest = undefined;
+      GameEvents.emit('prompt', {});
+      this.emitHud(true);
+      return;
+    }
     if (!entity.object.visible || this.saves.get().flags[entity.uniqueId]) return;
     this.saves.mutate((save) => { save.flags[entity.uniqueId] = true; }, true);
     if (entity.kind === 'lantern') {
@@ -1291,6 +2156,10 @@ export class WorldScene extends Phaser.Scene {
 
   private isInteractiveAvailable(entity: InteractiveEntity): boolean {
     if (entity.kind === 'npc' || entity.kind === 'door' || entity.kind === 'chest' || entity.kind === 'shrine' || entity.kind === 'rift') return true;
+    // A passage only becomes usable once discovered; then it always is.
+    if (entity.kind === 'passage') return Boolean(this.saves.get().flags[`secret-found:${entity.id}`]);
+    // A secret is reachable once discovered and until it's been claimed.
+    if (entity.kind === 'secret') return Boolean(this.saves.get().flags[`secret-found:${entity.id}`]) && !this.saves.get().flags[entity.uniqueId];
     if (entity.kind === 'lift' && this.saves.get().flags[entity.uniqueId]) return true;
     if (this.saves.get().flags[entity.uniqueId]) return false;
     return this.isObjectiveActive(entity.objectiveType!, entity.target!);
@@ -1307,6 +2176,16 @@ export class WorldScene extends Phaser.Scene {
   private syncInteractables(): void {
     this.interactables.forEach((entity) => {
       if (entity.kind === 'npc' || entity.kind === 'door') return;
+      // Secrets and passages own their own reveal/alpha via updateSecretVisibility;
+      // only refresh their claimed-state label here.
+      if (entity.kind === 'passage') return;
+      if (entity.kind === 'secret') {
+        const claimed = Boolean(this.saves.get().flags[entity.uniqueId]);
+        if (entity.secretKind === 'chest') entity.label = claimed ? 'Тайник пуст' : 'Открыть тайник';
+        else if (entity.secretKind === 'shrine') { if (claimed) entity.object.setTint(0x666570); entity.label = claimed ? 'Святилище молчит' : 'Коснуться святилища'; }
+        else entity.label = claimed ? 'Осмотрено' : 'Осмотреть';
+        return;
+      }
       const used = Boolean(this.saves.get().flags[entity.uniqueId]);
       if (entity.kind === 'lantern') {
         entity.object.setTexture(used ? 'lantern-on' : 'lantern-off').setAlpha(used ? .95 : this.isObjectiveActive('interact', 'lantern') ? 1 : .55);
@@ -1501,17 +2380,21 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     const objective = active.quest.objectives[active.progress.objectiveIndex];
-    const positions: Record<string, { x: number; y: number }> = {
-      moonwort: { x: 690, y: 740 }, husk: { x: 1820, y: 590 }, witchbow: { x: 1155, y: 610 }, boneguard: { x: 2240, y: 1120 },
-      shadebloom: { x: 1370, y: 1320 }, forest_altar: { x: 1660, y: 1580 }, ruins: { x: 2120, y: 1130 }, nameless: { x: 2280, y: 1330 },
-      charm: { x: 2030, y: 520 }, direwolf: { x: 1390, y: 1370 }, lantern: { x: 1590, y: 820 },
-      bog_reed: { x: 3250, y: 620 }, bogling: { x: 3280, y: 600 }, ferryman_cargo: { x: 3260, y: 2480 }, glowcap: { x: 3280, y: 700 },
-      mines: { x: 3500, y: 1420 }, cavecrawler: { x: 3570, y: 1500 }, miner_tools: { x: 3810, y: 1640 }, mine_lift: { x: 3595, y: 1450 },
-      citadel: { x: 4050, y: 1700 }, cinderlord: { x: 4200, y: 2420 },
-    };
-    const position = positions[objective.target];
+    const position = WorldScene.OBJECTIVE_POINTS[objective.target];
     if (position) this.objectiveMarker.setPosition(position.x, position.y).setVisible(true);
     else this.objectiveMarker.setVisible(false);
+  }
+
+  /** World anchor for the current quest objective, shared by the marker + map. */
+  private objectivePoint(): { x: number; y: number } | undefined {
+    const active = this.quests.activeObjective();
+    if (!active) return undefined;
+    if (active.progress.status === 'ready') {
+      const npc = NPCS.find((item) => item.id === active.quest.giver);
+      return npc ? { x: npc.x, y: npc.y } : undefined;
+    }
+    const objective = active.quest.objectives[active.progress.objectiveIndex];
+    return WorldScene.OBJECTIVE_POINTS[objective.target];
   }
 
   private updateEnemyBars(): void {
@@ -1546,8 +2429,40 @@ export class WorldScene extends Phaser.Scene {
         const flash = this.add.circle(enemy.x, enemy.y, 110, color, .4).setDepth(enemy.depth - 1);
         this.tweens.add({ targets: flash, scale: 2.1, alpha: 0, duration: 1050, onComplete: () => flash.destroy() });
         this.cameras.main.shake(500, .009);
+        this.lighting.flash(enemy.x, enemy.y, 380, color, 900);
         GameEvents.emit('toast', message);
         this.sfx.setCombat(true);
+        // Escalate the score to the boss theme and start the flawless-kill timer.
+        this.sfx.setBossFight(true);
+        this.bossFightStartedAt = this.time.now;
+
+        const settings = this.saves.get().settings;
+        const bossContext: BossContext = {
+          hurtPlayer: (amount) => this.hurtPlayer(amount),
+          spawnAdd: (addType, x, y) => {
+            this.spawnEnemy({ type: addType as keyof typeof ENEMIES, x, y, temporary: true });
+          },
+          spawnProjectile: (request) => this.spawnEnemyProjectile(request),
+          playerX: () => this.player.x,
+          playerY: () => this.player.y,
+          playerAlive: () => this.player.active,
+          reducedMotion: settings.reducedMotion,
+          lowQuality: settings.quality === 'low' || (settings.quality === 'auto' && this.scale.width < 700),
+          onPhase: (phase, total) => {
+            GameEvents.emit('boss-health', { health: Number(enemy?.getData('health')) || 0, phase });
+            GameEvents.emit('toast', `${ENEMIES[type].name} — фаза ${phase}/${total}`);
+          },
+          setInvulnerable: (value) => enemy?.setData('bossInvulnerable', value),
+        };
+        const fight = new BossFight(this, enemy, type, bossContext);
+        if (type === 'nameless') this.namelessFight = fight;
+        else this.cinderFight = fight;
+        // Tell the HUD to raise the boss bar.
+        GameEvents.emit('boss-engage', {
+          name: ENEMIES[type].name,
+          maxHealth: Number(enemy.getData('maxHealth')) || ENEMIES[type].health,
+          phases: 3,
+        });
       }
       return enemy;
     };
@@ -1584,6 +2499,8 @@ export class WorldScene extends Phaser.Scene {
       chest: save.chest.map((stack) => ({ ...stack })),
       equipment: structuredClone(save.equipment),
       discoveredLocations: [...save.discoveredLocations],
+      discoveredSecrets: this.discoveredSecretIds(),
+      objectivePoint: this.objectivePoint(),
       currentScene: 'world',
       settings: { ...save.settings },
       activeQuest: active && objective ? {
@@ -1621,9 +2538,22 @@ export class WorldScene extends Phaser.Scene {
 
   private cleanup(): void {
     this.sfx.setCombat(false);
+    this.sfx.setBossFight(false);
+    // Stop the rain bed so it doesn't keep playing into the next scene.
+    this.sfx.setRain(0);
     this.eventDisposers.forEach((dispose) => dispose());
     this.eventDisposers = [];
+    // Both systems register scale-resize listeners, so they must be torn down
+    // explicitly or they leak across scene restarts.
+    this.lighting?.destroy();
+    this.weather?.destroy();
+    this.namelessFight?.destroy();
+    this.cinderFight?.destroy();
+    this.namelessFight = undefined;
+    this.cinderFight = undefined;
     this.ui?.destroy();
+    // Persist the time of day so re-entering the world doesn't reset the cycle.
+    this.saves?.mutate((save) => { save.dayProgress = this.lighting?.getDayProgress() ?? save.dayProgress; });
     this.saves?.flush();
   }
 }

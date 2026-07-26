@@ -109,6 +109,19 @@ export interface PlayerSave {
   flags: Record<string, boolean>;
   tutorialDone: boolean;
   playtime: number;
+  // --- v3 fields. All optional-by-default in the save loader so v2 saves and
+  // the v1 migration path keep working without data loss. See SaveSystem.ts. ---
+  // Per-weapon upgrade level (blacksmith reinforcement), 0..5. Missing key = +0.
+  weaponUpgrades: Record<string, number>;
+  // Kills recorded per enemy id for the bestiary. Missing key = 0 kills.
+  bestiary: Record<string, number>;
+  // Ids of achievements the player has unlocked.
+  achievements: string[];
+  // Rolling skill counters achievements read from (best combo, no-hit boss kills…).
+  stats: PlayerStats;
+  // Position in the day/night cycle, 0..1. Persisted so reloading doesn't reset
+  // the player to noon and erase the night they were surviving.
+  dayProgress: number;
   settings: {
     sound: boolean;
     masterVolume: number;
@@ -118,6 +131,77 @@ export interface PlayerSave {
     reducedMotion: boolean;
     quality: 'auto' | 'high' | 'low';
   };
+}
+
+// Aggregate skill/progress counters. Kept separate from questProgress/bestiary so
+// achievement rules can read a single flat snapshot without recomputing anything.
+export interface PlayerStats {
+  totalKills: number;
+  bossKills: number;
+  flawlessBossKills: number;
+  bestCombo: number;
+  itemsCrafted: number;
+  weaponsUpgraded: number;
+  coinsEarned: number;
+  questsCompleted: number;
+}
+
+export type RecipeKind = 'consumable' | 'equipment';
+
+// A crafting recipe: consume `materials` (+ optional coins) to produce `output`.
+export interface CraftingRecipe {
+  id: string;
+  name: string;
+  description: string;
+  kind: RecipeKind;
+  station: string; // NPC id where crafting happens (e.g. 'runa').
+  materials: InventoryStack[];
+  coins?: number;
+  output: InventoryStack;
+  requiredRep?: number;
+}
+
+// One reinforcement level for a weapon at the blacksmith.
+export interface WeaponUpgradeTier {
+  level: number; // 1..5
+  coins: number;
+  materials: InventoryStack[];
+  damageBonusPct: number; // cumulative percentage added to base damage at this level
+}
+
+export interface BestiaryEntry {
+  enemyId: string;
+  name: string;
+  kills: number;
+  // Progressive reveal thresholds are reached top-down as kills accrue.
+  appearanceRevealed: boolean; // >= 1 kill: name + look
+  statsRevealed: boolean; // >= 5 kills: health/damage numbers
+  weaknessRevealed: boolean; // >= 15 kills: weakness hint
+  lore: string; // always present, but UI may gate it behind appearanceRevealed
+  weakness: string;
+  stats?: { health: number; damage: number; speed: number };
+}
+
+export type AchievementCategory =
+  | 'kills'
+  | 'exploration'
+  | 'crafting'
+  | 'quests'
+  | 'economy'
+  | 'skill'
+  | 'secret';
+
+export interface AchievementDefinition {
+  id: string;
+  name: string;
+  description: string;
+  category: AchievementCategory;
+  hidden?: boolean; // secret achievements stay masked until unlocked
+  icon: string;
+}
+
+export interface AchievementView extends AchievementDefinition {
+  unlocked: boolean;
 }
 
 export interface EnemyDefinition {
@@ -148,6 +232,10 @@ export interface HudSnapshot {
   chest: InventoryStack[];
   equipment: EquipmentState;
   discoveredLocations: string[];
+  /** Ids of hidden places (secrets, shortcut mouths, the ford) already found. */
+  discoveredSecrets: string[];
+  /** World point of the current quest objective, for the map's objective marker. */
+  objectivePoint?: { x: number; y: number };
   currentScene: string;
   settings: PlayerSave['settings'];
   activeQuest?: {

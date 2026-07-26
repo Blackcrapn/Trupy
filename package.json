@@ -1,7 +1,7 @@
 {
   "name": "trupy",
   "private": true,
-  "version": "4.0.0",
+  "version": "5.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -9,8 +9,11 @@
     "preview": "vite preview --host 0.0.0.0",
     "typecheck": "tsc --noEmit",
     "test:data": "tsx tests/data.test.ts",
+    "test:systems": "tsx tests/systems.check.ts",
+    "test:runtime": "node tests/runtime.test.mjs",
     "test:smoke": "node tests/smoke.mjs",
-    "test": "npm run test:data && npm run test:smoke"
+    "test": "npm run test:data && npm run test:systems && npm run test:runtime && npm run test:smoke",
+    "test:node": "node --import ./tests/ts-loader.mjs tests/data.test.ts && node --import ./tests/ts-loader.mjs tests/systems.check.ts && node tests/runtime.test.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"
